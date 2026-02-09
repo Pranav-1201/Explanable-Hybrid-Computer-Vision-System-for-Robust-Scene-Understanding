@@ -21,3 +21,15 @@ results/
 data/features/
 data/train/
 data/test/
+
+# Dataset folders
+data/MIT_Indoor/
+data/MITINDOOR/
+data/Raw/
+
+# Extracted / cached features
+data/*.npz
+
+# Results & artifacts
+results/
+logs/
