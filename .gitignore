@@ -16,3 +16,8 @@ logs/
 .DS_Store
 .vscode/
 .idea/
+
+results/
+data/features/
+data/train/
+data/test/
