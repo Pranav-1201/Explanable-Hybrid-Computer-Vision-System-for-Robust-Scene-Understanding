@@ -1,0 +1,925 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>EHCV — Explainable Hybrid Vision System</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet" />
+
+  <style>
+    /* ─── Base ─────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #050810;
+      --surface:   #0b0f1c;
+      --border:    #1a2240;
+      --border-hi: #2a3d6e;
+      --accent:    #00d4ff;
+      --accent2:   #7b61ff;
+      --accent3:   #ff4d6d;
+      --text:      #c8d8f0;
+      --muted:     #4a5a80;
+      --success:   #00ffb3;
+      --mono:      "Space Mono", monospace;
+      --sans:      "Syne", sans-serif;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--sans);
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* ─── Scanline overlay ──────────────────────────────────── */
+    body::before {
+      content: "";
+      position: fixed; inset: 0;
+      background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 2px,
+        rgba(0, 0, 0, 0.03) 2px,
+        rgba(0, 0, 0, 0.03) 4px
+      );
+      pointer-events: none;
+      z-index: 9999;
+    }
+
+    /* ─── Header ────────────────────────────────────────────── */
+    header {
+      border-bottom: 1px solid var(--border);
+      padding: 1.25rem 2.5rem;
+      display: flex;
+      align-items: center;
+      gap: 2rem;
+      position: sticky;
+      top: 0;
+      background: rgba(5, 8, 16, 0.92);
+      backdrop-filter: blur(12px);
+      z-index: 100;
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .logo-icon {
+      width: 36px;
+      height: 36px;
+      border: 2px solid var(--accent);
+      border-radius: 4px;
+      display: grid;
+      place-items: center;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .logo-icon::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(135deg, var(--accent) 0%, transparent 60%);
+      opacity: 0.15;
+    }
+
+    .logo-icon svg { z-index: 1; }
+
+    .logo-text {
+      font-family: var(--mono);
+      font-size: 0.8rem;
+      color: var(--accent);
+      letter-spacing: 0.15em;
+    }
+
+    .logo-sub {
+      font-size: 0.65rem;
+      color: var(--muted);
+      letter-spacing: 0.08em;
+      margin-top: 2px;
+    }
+
+    .header-status {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-family: var(--mono);
+      font-size: 0.7rem;
+      color: var(--muted);
+    }
+
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--muted);
+      transition: background 0.3s;
+    }
+
+    .status-dot.online  { background: var(--success); box-shadow: 0 0 6px var(--success); animation: pulse-dot 2s infinite; }
+    .status-dot.offline { background: var(--accent3); }
+
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.4; }
+    }
+
+    /* ─── Main layout ───────────────────────────────────────── */
+    main {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 2.5rem 2rem;
+      display: grid;
+      grid-template-columns: 420px 1fr;
+      gap: 2rem;
+      align-items: start;
+    }
+
+    @media (max-width: 900px) {
+      main { grid-template-columns: 1fr; }
+    }
+
+    /* ─── Panel ─────────────────────────────────────────────── */
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+
+    .panel-header {
+      padding: 1rem 1.5rem;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .panel-label {
+      font-family: var(--mono);
+      font-size: 0.65rem;
+      letter-spacing: 0.15em;
+      color: var(--muted);
+      text-transform: uppercase;
+    }
+
+    .panel-title {
+      font-size: 0.9rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .panel-body { padding: 1.5rem; }
+
+    /* ─── Upload zone ───────────────────────────────────────── */
+    #upload-zone {
+      border: 2px dashed var(--border-hi);
+      border-radius: 10px;
+      padding: 2.5rem 1.5rem;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1rem;
+      cursor: pointer;
+      transition: all 0.25s;
+      text-align: center;
+      position: relative;
+      overflow: hidden;
+    }
+
+    #upload-zone::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(ellipse at center, rgba(0, 212, 255, 0.04) 0%, transparent 70%);
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+
+    #upload-zone:hover,
+    #upload-zone.drag-over {
+      border-color: var(--accent);
+      background: rgba(0, 212, 255, 0.04);
+    }
+
+    #upload-zone:hover::before,
+    #upload-zone.drag-over::before { opacity: 1; }
+
+    .upload-icon {
+      width: 52px;
+      height: 52px;
+      border: 1px solid var(--border-hi);
+      border-radius: 10px;
+      display: grid;
+      place-items: center;
+      color: var(--accent);
+      transition: all 0.25s;
+    }
+
+    #upload-zone:hover .upload-icon { border-color: var(--accent); box-shadow: 0 0 20px rgba(0, 212, 255, 0.2); }
+
+    .upload-text { font-size: 0.85rem; color: var(--muted); }
+    .upload-text strong { color: var(--text); display: block; margin-bottom: 0.25rem; font-weight: 600; }
+    .upload-hint { font-family: var(--mono); font-size: 0.65rem; color: var(--muted); letter-spacing: 0.08em; }
+
+    #file-input { display: none; }
+
+    /* ─── Preview ───────────────────────────────────────────── */
+    #preview-wrap {
+      display: none;
+      position: relative;
+      border-radius: 8px;
+      overflow: hidden;
+      aspect-ratio: 4/3;
+      background: #000;
+    }
+
+    #preview-img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+
+    #preview-clear {
+      position: absolute;
+      top: 8px; right: 8px;
+      background: rgba(5, 8, 16, 0.85);
+      border: 1px solid var(--border-hi);
+      border-radius: 6px;
+      color: var(--text);
+      cursor: pointer;
+      padding: 4px 8px;
+      font-family: var(--mono);
+      font-size: 0.65rem;
+      letter-spacing: 0.08em;
+      transition: all 0.2s;
+    }
+
+    #preview-clear:hover { border-color: var(--accent3); color: var(--accent3); }
+
+    /* ─── Model selector ────────────────────────────────────── */
+    .model-toggle {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.5rem;
+      margin: 1.5rem 0 1rem;
+    }
+
+    .model-btn {
+      padding: 0.75rem 0.5rem;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: transparent;
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 0.7rem;
+      letter-spacing: 0.06em;
+      cursor: pointer;
+      transition: all 0.2s;
+      text-align: center;
+    }
+
+    .model-btn span {
+      display: block;
+      font-family: var(--sans);
+      font-size: 0.8rem;
+      font-weight: 700;
+      color: var(--text);
+      margin-bottom: 2px;
+      transition: color 0.2s;
+    }
+
+    .model-btn.active {
+      border-color: var(--accent);
+      background: rgba(0, 212, 255, 0.06);
+      color: var(--accent);
+    }
+
+    .model-btn.active span { color: var(--accent); }
+    .model-btn:hover:not(.active) { border-color: var(--border-hi); }
+
+    /* ─── Analyse button ────────────────────────────────────── */
+    #analyse-btn {
+      width: 100%;
+      padding: 0.9rem;
+      background: linear-gradient(135deg, var(--accent) 0%, #0099cc 100%);
+      border: none;
+      border-radius: 8px;
+      color: #000;
+      font-family: var(--sans);
+      font-size: 0.9rem;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+      cursor: pointer;
+      transition: all 0.25s;
+      position: relative;
+      overflow: hidden;
+    }
+
+    #analyse-btn::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: white;
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+
+    #analyse-btn:hover:not(:disabled)::after { opacity: 0.08; }
+    #analyse-btn:active:not(:disabled) { transform: scale(0.99); }
+
+    #analyse-btn:disabled {
+      background: var(--border);
+      color: var(--muted);
+      cursor: not-allowed;
+    }
+
+    /* Loading spinner inside button */
+    .spinner {
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      border: 2px solid rgba(0,0,0,0.3);
+      border-top-color: #000;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      margin-right: 8px;
+      vertical-align: middle;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ─── Results panel ─────────────────────────────────────── */
+    #results-panel { display: none; }
+
+    .result-section { margin-bottom: 2rem; }
+    .result-section:last-child { margin-bottom: 0; }
+
+    .section-label {
+      font-family: var(--mono);
+      font-size: 0.65rem;
+      color: var(--muted);
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      margin-bottom: 1rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .section-label::after {
+      content: "";
+      flex: 1;
+      height: 1px;
+      background: var(--border);
+    }
+
+    /* Prediction hero */
+    .prediction-hero {
+      display: flex;
+      align-items: flex-end;
+      gap: 1rem;
+      padding: 1.5rem;
+      background: rgba(0, 212, 255, 0.04);
+      border: 1px solid rgba(0, 212, 255, 0.15);
+      border-radius: 10px;
+      margin-bottom: 1.5rem;
+    }
+
+    .pred-class {
+      font-size: 2rem;
+      font-weight: 800;
+      color: var(--accent);
+      line-height: 1;
+      text-transform: capitalize;
+      flex: 1;
+    }
+
+    .pred-conf {
+      font-family: var(--mono);
+      font-size: 1.1rem;
+      color: var(--success);
+    }
+
+    .pred-model-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border: 1px solid var(--border-hi);
+      border-radius: 4px;
+      font-family: var(--mono);
+      font-size: 0.6rem;
+      color: var(--muted);
+      letter-spacing: 0.08em;
+      margin-bottom: 4px;
+    }
+
+    /* Top-5 bars */
+    .class-bar {
+      display: grid;
+      grid-template-columns: 130px 1fr 60px;
+      align-items: center;
+      gap: 0.75rem;
+      margin-bottom: 0.6rem;
+    }
+
+    .class-bar-name {
+      font-size: 0.78rem;
+      color: var(--text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      text-transform: capitalize;
+    }
+
+    .class-bar-track {
+      height: 6px;
+      background: var(--border);
+      border-radius: 99px;
+      overflow: hidden;
+    }
+
+    .class-bar-fill {
+      height: 100%;
+      border-radius: 99px;
+      background: linear-gradient(90deg, var(--accent2), var(--accent));
+      width: 0;
+      transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .class-bar:first-child .class-bar-fill {
+      background: linear-gradient(90deg, var(--accent), var(--success));
+    }
+
+    .class-bar-pct {
+      font-family: var(--mono);
+      font-size: 0.7rem;
+      color: var(--muted);
+      text-align: right;
+    }
+
+    /* Image grid */
+    .image-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+    }
+
+    .img-card {
+      border-radius: 8px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      background: #000;
+    }
+
+    .img-card img {
+      width: 100%;
+      display: block;
+      object-fit: cover;
+      aspect-ratio: 1;
+    }
+
+    .img-card-label {
+      padding: 0.5rem 0.75rem;
+      font-family: var(--mono);
+      font-size: 0.65rem;
+      color: var(--muted);
+      letter-spacing: 0.08em;
+      border-top: 1px solid var(--border);
+    }
+
+    /* Note / info box */
+    .info-box {
+      padding: 0.75rem 1rem;
+      border-left: 2px solid var(--accent2);
+      background: rgba(123, 97, 255, 0.05);
+      border-radius: 0 6px 6px 0;
+      font-size: 0.78rem;
+      color: var(--muted);
+    }
+
+    /* Error */
+    .error-box {
+      padding: 1rem;
+      border: 1px solid var(--accent3);
+      border-radius: 8px;
+      background: rgba(255, 77, 109, 0.06);
+      font-family: var(--mono);
+      font-size: 0.75rem;
+      color: var(--accent3);
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    /* ─── Empty state ───────────────────────────────────────── */
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 5rem 2rem;
+      gap: 1rem;
+      text-align: center;
+    }
+
+    .empty-state svg { color: var(--border-hi); }
+
+    .empty-title {
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: var(--muted);
+    }
+
+    .empty-sub {
+      font-family: var(--mono);
+      font-size: 0.7rem;
+      color: var(--border-hi);
+      letter-spacing: 0.06em;
+    }
+
+    /* ─── Corner grid decoration ────────────────────────────── */
+    .grid-deco {
+      position: fixed;
+      top: 0; right: 0;
+      width: 300px;
+      height: 300px;
+      opacity: 0.035;
+      pointer-events: none;
+    }
+
+    /* ─── Animations ────────────────────────────────────────── */
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(16px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .animate-in { animation: fadeUp 0.4s ease both; }
+  </style>
+</head>
+<body>
+
+<!-- Corner grid decoration -->
+<svg class="grid-deco" viewBox="0 0 300 300" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs><pattern id="g" width="30" height="30" patternUnits="userSpaceOnUse">
+    <path d="M30 0H0V30" stroke="white" stroke-width="0.5"/>
+  </pattern></defs>
+  <rect width="300" height="300" fill="url(#g)"/>
+</svg>
+
+<!-- ── Header ──────────────────────────────────────────────── -->
+<header>
+  <div class="logo">
+    <div class="logo-icon">
+      <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" color="#00d4ff">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z"/>
+        <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+      </svg>
+    </div>
+    <div>
+      <div class="logo-text">EHCV SYSTEM</div>
+      <div class="logo-sub">EXPLAINABLE HYBRID COMPUTER VISION</div>
+    </div>
+  </div>
+
+  <div class="header-status">
+    <div class="status-dot" id="status-dot"></div>
+    <span id="status-text">CONNECTING...</span>
+  </div>
+</header>
+
+<!-- ── Main ─────────────────────────────────────────────────── -->
+<main>
+
+  <!-- ── Left: Controls ──────────────────────────────────── -->
+  <div>
+
+    <!-- Upload -->
+    <div class="panel" style="margin-bottom: 1.5rem;">
+      <div class="panel-header">
+        <div>
+          <div class="panel-label">INPUT</div>
+          <div class="panel-title">Image Upload</div>
+        </div>
+      </div>
+      <div class="panel-body">
+
+        <!-- Drop zone -->
+        <div id="upload-zone" onclick="document.getElementById('file-input').click()">
+          <div class="upload-icon">
+            <svg width="22" height="22" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5"/>
+            </svg>
+          </div>
+          <div class="upload-text">
+            <strong>Drop image here or click to browse</strong>
+            Any scene or indoor environment image
+          </div>
+          <div class="upload-hint">JPG · PNG · WEBP · BMP</div>
+        </div>
+
+        <div id="preview-wrap" style="margin-top: 1rem;">
+          <img id="preview-img" src="" alt="Preview" />
+          <button id="preview-clear" onclick="clearImage()">✕ CLEAR</button>
+        </div>
+
+        <input type="file" id="file-input" accept="image/*" onchange="handleFile(this.files[0])" />
+
+        <!-- Model selector -->
+        <div class="model-toggle">
+          <button class="model-btn active" id="btn-baseline" onclick="selectModel('baseline')">
+            <span>CNN Baseline</span>
+            ResNet-18 + Grad-CAM
+          </button>
+          <button class="model-btn" id="btn-hybrid" onclick="selectModel('hybrid')">
+            <span>Hybrid MLP</span>
+            HOG + Neural Net
+          </button>
+        </div>
+
+        <button id="analyse-btn" onclick="analyse()" disabled>
+          Analyse Scene
+        </button>
+
+      </div>
+    </div>
+
+    <!-- System info -->
+    <div class="panel" id="sys-info-panel">
+      <div class="panel-header">
+        <div>
+          <div class="panel-label">SYSTEM</div>
+          <div class="panel-title">Runtime Status</div>
+        </div>
+      </div>
+      <div class="panel-body" style="padding: 1rem 1.5rem;">
+        <div id="sys-info-content" style="font-family: var(--mono); font-size: 0.7rem; color: var(--muted); line-height: 1.8;">
+          Polling server...
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ── Right: Results ───────────────────────────────────── -->
+  <div class="panel">
+    <div class="panel-header">
+      <div>
+        <div class="panel-label">OUTPUT</div>
+        <div class="panel-title">Scene Analysis</div>
+      </div>
+    </div>
+    <div class="panel-body">
+
+      <!-- Empty state -->
+      <div class="empty-state" id="empty-state">
+        <svg width="52" height="52" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M9.53 16.122a3 3 0 00-5.78 1.128 2.25 2.25 0 01-2.4 2.245 4.5 4.5 0 008.4-2.245c0-.399-.078-.78-.22-1.128zm0 0a15.998 15.998 0 003.388-1.62m-5.043-.025a15.994 15.994 0 011.622-3.395m3.42 3.42a15.995 15.995 0 004.764-4.648l3.876-5.814a1.151 1.151 0 00-1.597-1.597L14.146 6.32a15.996 15.996 0 00-4.649 4.763m3.42 3.42a6.776 6.776 0 00-3.42-3.42"/>
+        </svg>
+        <div class="empty-title">Awaiting Input</div>
+        <div class="empty-sub">Upload an image and select a model to begin analysis</div>
+      </div>
+
+      <!-- Results -->
+      <div id="results-panel"></div>
+
+    </div>
+  </div>
+
+</main>
+
+<script>
+  const API = "http://localhost:5000";
+  let selectedModel = "baseline";
+  let selectedFile  = null;
+
+  // ── Drag & Drop ────────────────────────────────────────────
+  const zone = document.getElementById("upload-zone");
+  zone.addEventListener("dragover", e => { e.preventDefault(); zone.classList.add("drag-over"); });
+  zone.addEventListener("dragleave",     () => zone.classList.remove("drag-over"));
+  zone.addEventListener("drop", e => {
+    e.preventDefault();
+    zone.classList.remove("drag-over");
+    if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+  });
+
+  // ── File handling ──────────────────────────────────────────
+  function handleFile(file) {
+    if (!file || !file.type.startsWith("image/")) return;
+    selectedFile = file;
+
+    const reader = new FileReader();
+    reader.onload = e => {
+      const wrap = document.getElementById("preview-wrap");
+      const img  = document.getElementById("preview-img");
+      img.src = e.target.result;
+      wrap.style.display = "block";
+      zone.style.display = "none";
+      updateAnalyseBtn();
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function clearImage() {
+    selectedFile = null;
+    document.getElementById("preview-wrap").style.display = "none";
+    document.getElementById("upload-zone").style.display = "flex";
+    document.getElementById("file-input").value = "";
+    updateAnalyseBtn();
+    showEmpty();
+  }
+
+  // ── Model toggle ───────────────────────────────────────────
+  function selectModel(m) {
+    selectedModel = m;
+    document.getElementById("btn-baseline").classList.toggle("active", m === "baseline");
+    document.getElementById("btn-hybrid"  ).classList.toggle("active", m === "hybrid");
+  }
+
+  // ── Analyse button state ───────────────────────────────────
+  function updateAnalyseBtn() {
+    document.getElementById("analyse-btn").disabled = !selectedFile;
+  }
+
+  // ── Analyse ────────────────────────────────────────────────
+  async function analyse() {
+    if (!selectedFile) return;
+
+    const btn = document.getElementById("analyse-btn");
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span>Analysing...';
+    showEmpty(false);
+
+    const form = new FormData();
+    form.append("image", selectedFile);
+    form.append("model", selectedModel);
+
+    try {
+      const resp = await fetch(`${API}/predict`, { method: "POST", body: form });
+      const data = await resp.json();
+
+      if (data.error) {
+        showError(data.error);
+      } else {
+        showResults(data);
+      }
+    } catch (err) {
+      showError(`Cannot reach server at ${API}\n\nMake sure app.py is running:\n  python app.py`);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Analyse Scene";
+    }
+  }
+
+  // ── Render results ─────────────────────────────────────────
+  function showResults(data) {
+    const panel = document.getElementById("results-panel");
+    const empty = document.getElementById("empty-state");
+    empty.style.display = "none";
+    panel.style.display = "block";
+
+    const confPct = (data.confidence * 100).toFixed(1);
+    const modelLabel = data.model === "baseline" ? "CNN BASELINE" : "HYBRID MLP";
+
+    let html = `
+      <div class="result-section animate-in">
+        <div class="section-label">Prediction</div>
+        <div class="prediction-hero">
+          <div>
+            <div class="pred-model-badge">${modelLabel}</div>
+            <div class="pred-class">${formatClass(data.prediction)}</div>
+          </div>
+          <div>
+            <div style="font-family: var(--mono); font-size: 0.6rem; color: var(--muted); margin-bottom: 2px;">CONFIDENCE</div>
+            <div class="pred-conf">${confPct}%</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="result-section animate-in" style="animation-delay: 0.05s;">
+        <div class="section-label">Top-5 Predictions</div>
+    `;
+
+    data.top5.forEach((item, i) => {
+      const pct = (item.prob * 100).toFixed(1);
+      html += `
+        <div class="class-bar">
+          <div class="class-bar-name" title="${item.class}">${formatClass(item.class)}</div>
+          <div class="class-bar-track">
+            <div class="class-bar-fill" data-width="${item.prob * 100}%"></div>
+          </div>
+          <div class="class-bar-pct">${pct}%</div>
+        </div>
+      `;
+    });
+
+    html += `</div>`;
+
+    // Images section
+    if (data.original_image || data.gradcam) {
+      html += `
+        <div class="result-section animate-in" style="animation-delay: 0.1s;">
+          <div class="section-label">${data.gradcam ? "Visual Analysis" : "Input Image"}</div>
+          <div class="image-grid">
+      `;
+
+      if (data.original_image) {
+        html += `
+          <div class="img-card">
+            <img src="data:image/png;base64,${data.original_image}" alt="Original" />
+            <div class="img-card-label">ORIGINAL INPUT</div>
+          </div>
+        `;
+      }
+
+      if (data.gradcam) {
+        html += `
+          <div class="img-card">
+            <img src="data:image/png;base64,${data.gradcam}" alt="Grad-CAM" />
+            <div class="img-card-label">GRAD-CAM EXPLANATION</div>
+          </div>
+        `;
+      }
+
+      html += `</div></div>`;
+    }
+
+    if (data.note) {
+      html += `
+        <div class="result-section animate-in" style="animation-delay: 0.15s;">
+          <div class="info-box">${data.note}</div>
+        </div>
+      `;
+    }
+
+    panel.innerHTML = html;
+
+    // Animate bars
+    requestAnimationFrame(() => {
+      panel.querySelectorAll(".class-bar-fill").forEach(el => {
+        el.style.width = el.dataset.width;
+      });
+    });
+  }
+
+  function formatClass(name) {
+    return name.replace(/_/g, " ");
+  }
+
+  function showEmpty(show = true) {
+    document.getElementById("empty-state").style.display = show ? "flex" : "none";
+    document.getElementById("results-panel").style.display = show ? "none" : "block";
+    if (show) document.getElementById("results-panel").innerHTML = "";
+  }
+
+  function showError(msg) {
+    const panel = document.getElementById("results-panel");
+    document.getElementById("empty-state").style.display = "none";
+    panel.style.display = "block";
+    panel.innerHTML = `<div class="error-box animate-in">⚠ ${msg}</div>`;
+  }
+
+  // ── Health check ───────────────────────────────────────────
+  async function checkHealth() {
+    const dot  = document.getElementById("status-dot");
+    const text = document.getElementById("status-text");
+    const info = document.getElementById("sys-info-content");
+
+    try {
+      const r    = await fetch(`${API}/health`);
+      const data = await r.json();
+
+      dot.className  = "status-dot online";
+      text.textContent = "API ONLINE";
+
+      const device = data.device === "cpu" ? "CPU" : "CUDA GPU";
+      info.innerHTML = `
+        DEVICE &nbsp;&nbsp;&nbsp; ${device}<br>
+        BASELINE &nbsp; ${data.baseline_loaded ? '<span style="color:#00ffb3">LOADED</span>' : '<span style="color:#ff4d6d">NOT LOADED</span>'}<br>
+        HYBRID &nbsp;&nbsp;&nbsp; ${data.hybrid_loaded ? '<span style="color:#00ffb3">LOADED</span>' : '<span style="color:#ff4d6d">NOT LOADED</span>'}<br>
+        CLASSES &nbsp;&nbsp; ${data.num_classes > 0 ? data.num_classes + ' classes' : '<span style="color:#ff4d6d">NONE FOUND</span>'}<br>
+        ENDPOINT &nbsp; ${API}
+      `;
+    } catch {
+      dot.className   = "status-dot offline";
+      text.textContent = "API OFFLINE";
+      info.innerHTML  = `<span style="color:var(--accent3)">Server not reachable.<br>Run: python app.py</span>`;
+    }
+  }
+
+  checkHealth();
+  setInterval(checkHealth, 8000);
+</script>
+
+</body>
+</html>
