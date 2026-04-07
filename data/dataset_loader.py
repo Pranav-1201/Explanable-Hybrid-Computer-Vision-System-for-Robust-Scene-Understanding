@@ -9,14 +9,13 @@
 
 import os
 from PIL import Image
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
-
 
 # ------------------------------------------------------------
 # Image Transform Pipelines
 # ------------------------------------------------------------
-def get_transforms(train: bool = True):
+def get_transforms(train=False):
     """
     Returns torchvision transforms for training or evaluation.
 
@@ -31,21 +30,40 @@ def get_transforms(train: bool = True):
     """
     if train:
         return transforms.Compose([
-            transforms.Resize((224, 224)),
-            transforms.RandomHorizontalFlip(),
+            transforms.Resize((256,256)),
+            transforms.RandomResizedCrop(224),
+
+            transforms.RandomHorizontalFlip(p=0.5),
+            transforms.RandomRotation(15),
+
+            transforms.ColorJitter(
+                brightness=0.2,
+                contrast=0.2,
+                saturation=0.2,
+                hue=0.05
+            ),
+
+            transforms.RandomPerspective(
+                distortion_scale=0.2,
+                p=0.3
+            ),
+
             transforms.ToTensor(),
+
             transforms.Normalize(
-                mean=[0.485, 0.456, 0.406],
-                std=[0.229, 0.224, 0.225]
+                mean=[0.485,0.456,0.406],
+                std=[0.229,0.224,0.225]
             )
         ])
+
     else:
         return transforms.Compose([
-            transforms.Resize((224, 224)),
+            transforms.Resize((224,224)),
             transforms.ToTensor(),
+
             transforms.Normalize(
-                mean=[0.485, 0.456, 0.406],
-                std=[0.229, 0.224, 0.225]
+                mean=[0.485,0.456,0.406],
+                std=[0.229,0.224,0.225]
             )
         ])
 
@@ -69,10 +87,12 @@ class MITIndoorDataset(Dataset):
         self.image_paths = []
         self.labels = []
 
-        # Sorted class list for consistent label mapping
+        # Use global class order from the training set
+        base_dir = os.path.join(os.path.dirname(root_dir), "train")
+
         self.classes = sorted([
-            d for d in os.listdir(root_dir)
-            if os.path.isdir(os.path.join(root_dir, d))
+            d for d in os.listdir(base_dir)
+            if os.path.isdir(os.path.join(base_dir, d))
         ])
 
         # Build (image_path, label) pairs
@@ -100,3 +120,50 @@ class MITIndoorDataset(Dataset):
             image = self.transform(image)
 
         return image, label
+    
+# ------------------------------------------------------------
+# DataLoader Helpers
+# ------------------------------------------------------------
+from torch.utils.data import DataLoader
+
+
+def get_train_loader(batch_size=32, num_workers=4):
+    """
+    Returns DataLoader for training dataset.
+    """
+
+    dataset = MITIndoorDataset(
+        root_dir="data/MIT_Indoor/train",
+        transform=get_transforms(train=True)
+    )
+
+    loader = DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=num_workers,
+        pin_memory=True
+    )
+
+    return loader
+
+
+def get_test_loader(batch_size=32, num_workers=4):
+    """
+    Returns DataLoader for test dataset.
+    """
+
+    dataset = MITIndoorDataset(
+        root_dir="data/MIT_Indoor/test",
+        transform=get_transforms(train=False)
+    )
+
+    loader = DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=True
+    )
+
+    return loader

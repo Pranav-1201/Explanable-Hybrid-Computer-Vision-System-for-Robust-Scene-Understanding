@@ -1,30 +1,36 @@
-# pipeline_timer.py
-# ============================================================
-# Pipeline Timer Wrapper (Windows-safe, venv-safe)
-# ============================================================
-
 import subprocess
 import time
 import sys
 
-PYTHON = sys.executable  # 🔥 THIS IS THE KEY FIX
+PYTHON = sys.executable
 
 STEPS = [
-    ("[1/8] Dataset sanity check", [PYTHON, "data/test_loader.py"]),
-    ("[2/8] HOG feature extraction", [PYTHON, "preprocessing/extract_hog_features.py"]),
-    ("[3/8] Train baseline CNN", [PYTHON, "training/train_baseline.py"]),
-    ("[4/8] Train hybrid model", [PYTHON, "training/train_hybrid.py"]),
-    ("[5/8] Evaluate models", [PYTHON, "evaluation/evaluate_models.py"]),
-    ("[6/8] Robustness testing", [PYTHON, "evaluation/robustness_test.py"]),
-    ("[7/8] Grad-CAM explainability", [PYTHON, "explainability/gradcam_explain.py"]),
+    ("Dataset sanity check",        [PYTHON, "data/test_loader.py"]),
+    ("HOG feature extraction",      [PYTHON, "preprocessing/extract_hog_features.py"]),
+    ("Train baseline CNN",          [PYTHON, "training/train_baseline.py"]),
+    ("Train hybrid SVM",            [PYTHON, "training/train_hybrid_svm.py"]),
+    ("Evaluate models",             [PYTHON, "evaluation/evaluate_models.py"]),
+    ("Robustness testing",          [PYTHON, "evaluation/robustness_test.py"]),
+    ("Grad-CAM explainability",     [PYTHON, "explainability/gradcam_explain.py"]),
+    ("Evaluate hybrid SVM (detail)",[PYTHON, "evaluation/evaluate_hybrid_svm.py"]),
 ]
+
+
+def format_time(seconds):
+    if seconds < 60:
+        return f"{seconds:.2f} sec"
+    else:
+        return f"{seconds/60:.2f} min"
+
 
 def main():
     pipeline_start = time.time()
+    step_times = []
+
     print("\n================ PIPELINE STARTED ================\n")
 
-    for name, cmd in STEPS:
-        print(name)
+    for i, (name, cmd) in enumerate(STEPS, 1):
+        print(f"[{i}/{len(STEPS)}] {name}")
         print("-" * 60)
 
         step_start = time.time()
@@ -32,17 +38,25 @@ def main():
         step_time = time.time() - step_start
 
         if result != 0:
-            print("\nERROR: Pipeline stopped.")
+            print(f"\n[ERROR] Step failed: {name}")
+            print("Pipeline stopped.")
             sys.exit(1)
 
-        print(f"[DONE] Step time: {step_time:.2f} seconds\n")
+        step_times.append((name, step_time))
+        print(f"[DONE] {name} → {format_time(step_time)}\n")
 
     total_time = time.time() - pipeline_start
 
-    print("================ PIPELINE SUMMARY ================")
-    print(f"Total Pipeline Time : {total_time:.2f} seconds")
-    print(f"Total Pipeline Time : {total_time/60:.2f} minutes")
-    print("==================================================")
+    # ---------------- SUMMARY ----------------
+    print("\n================ PIPELINE SUMMARY ================")
+
+    for name, t in step_times:
+        print(f"{name:<35} : {format_time(t)}")
+
+    print("-" * 50)
+    print(f"{'TOTAL TIME':<35} : {format_time(total_time)}")
+    print("==================================================\n")
+
 
 if __name__ == "__main__":
     main()

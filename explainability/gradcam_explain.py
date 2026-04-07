@@ -51,9 +51,18 @@ os.makedirs("results", exist_ok=True)
 # LOAD BASELINE MODEL
 # ------------------------------------------------------------
 model = CNNBaseline(num_classes)
-model.load_state_dict(
-    torch.load("models/baseline.pth", map_location=device)
-)
+
+checkpoint = torch.load("models/baseline.pth", map_location=device)
+
+# Fix key mismatch
+new_state_dict = {}
+for k, v in checkpoint.items():
+    if not k.startswith("model."):
+        new_state_dict["model." + k] = v
+    else:
+        new_state_dict[k] = v
+
+model.load_state_dict(new_state_dict)
 model.to(device)
 model.eval()
 

@@ -1,175 +1,209 @@
 # training/train_hybrid.py
 # ============================================================
-# Hybrid Model Training Script (HOG Features)
+# IMPROVED: Hybrid Model Training
 # ------------------------------------------------------------
-# - Trains an MLP on precomputed HOG features
-# - Extremely fast (seconds, not minutes)
-# - No image loading, no CPU bottlenecks
+# Key improvements over original:
+#   1. Cosine annealing LR schedule (not fixed LR)
+#   2. Validation split for honest early stopping
+#      (original stopped on train loss → overfit)
+#   3. Best model checkpoint by val accuracy
+#   4. Label smoothing in CrossEntropyLoss
+#   5. Higher patience — was 3, now 10
+#   6. Warmup epochs before LR decay
 # ============================================================
 
 import os
 import sys
 import warnings
+import time
+import numpy as np
 
 warnings.filterwarnings("ignore")
-
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader
-
-import time
+from torch.utils.data import DataLoader, random_split
 
 from data.hybrid_dataset import HybridDataset
 from models.hybrid_cnn import HybridCNN
 
-# ------------------------------------------------------------
-# EARLY STOPPING
-# ------------------------------------------------------------
-class EarlyStopping:
-    def __init__(self, patience=3, min_delta=0.001):
-        self.patience = patience
-        self.min_delta = min_delta
-        self.best_loss = None
-        self.counter = 0
 
-    def step(self, loss):
-        if self.best_loss is None or loss < self.best_loss - self.min_delta:
-            self.best_loss = loss
+# ============================================================
+# EARLY STOPPING (on VALIDATION accuracy, not train loss)
+# ============================================================
+class EarlyStopping:
+    def __init__(self, patience=10, min_delta=0.001):
+        self.patience   = patience
+        self.min_delta  = min_delta
+        self.best_score = None
+        self.counter    = 0
+
+    def step(self, val_acc: float) -> bool:
+        if self.best_score is None or val_acc > self.best_score + self.min_delta:
+            self.best_score = val_acc
             self.counter = 0
             return False
         else:
             self.counter += 1
             return self.counter >= self.patience
 
-# ------------------------------------------------------------
-# TRAIN FUNCTION
-# ------------------------------------------------------------
+
+# ============================================================
+# TRAIN
+# ============================================================
 def train():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    # --------------------------------------------------------
-    # DATASET
-    # --------------------------------------------------------
-    train_dataset = HybridDataset(split="train")
+    # ----------------------------------------------------------
+    # DATASET — split train into 90% train / 10% val
+    # ----------------------------------------------------------
+    full_dataset = HybridDataset(split="train")
+    n_total      = len(full_dataset)
+    n_val        = max(1, int(0.10 * n_total))
+    n_train      = n_total - n_val
 
-    feature_dim = train_dataset.features.shape[1]
-    num_classes = len(train_dataset.classes)
+    train_dataset, val_dataset = random_split(
+        full_dataset,
+        [n_train, n_val],
+        generator=torch.Generator().manual_seed(42)
+    )
 
-    print(f"Feature dimension: {feature_dim}")
-    print(f"Number of classes: {num_classes}")
-    print(f"Training samples : {len(train_dataset)}")
+    feature_dim  = full_dataset.features.shape[1]
+    num_classes  = len(full_dataset.classes)
 
-    # --------------------------------------------------------
-    # DATALOADER
-    # --------------------------------------------------------
+    print(f"Feature dim   : {feature_dim}")
+    print(f"Num classes   : {num_classes}")
+    print(f"Train samples : {n_train}")
+    print(f"Val samples   : {n_val}")
+
     train_loader = DataLoader(
         train_dataset,
-        batch_size=256,          # Large batch = GPU efficient
+        batch_size=256,
         shuffle=True,
-        num_workers=0            # No disk I/O, no workers needed
+        num_workers=0
+    )
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=256,
+        shuffle=False,
+        num_workers=0
     )
 
-    # --------------------------------------------------------
+    # ----------------------------------------------------------
     # MODEL
-    # --------------------------------------------------------
+    # ----------------------------------------------------------
     model = HybridCNN(feature_dim, num_classes).to(device)
 
-    criterion = nn.CrossEntropyLoss()
+    total_params = sum(p.numel() for p in model.parameters())
+    print(f"Model params  : {total_params:,}")
+
+    # Label smoothing helps prevent overconfident overfitting
+    criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
+
     optimizer = torch.optim.Adam(
         model.parameters(),
-        lr=1e-4,
-        weight_decay=1e-4
+        lr=3e-4,
+        weight_decay=1e-3    # stronger L2 than original (was 1e-4)
     )
 
-    # --------------------------------------------------------
-    # TRAIN LOOP
-    # --------------------------------------------------------
-    epochs = 50
-    model.train()
-    early_stopper = EarlyStopping(patience=3)
+    # Cosine annealing: LR warms up for 5 epochs then decays
+    epochs = 100
+    scheduler = torch.optim.lr_scheduler.OneCycleLR(
+        optimizer,
+        max_lr=3e-4,
+        steps_per_epoch=len(train_loader),
+        epochs=epochs,
+        pct_start=0.05,       # 5% warmup
+        anneal_strategy="cos"
+    )
 
-    # --------------------------------------------------------
-    # Training Time Tracking
-    # --------------------------------------------------------
-    epoch_times = []
-    training_start_time = time.time()
+    # ----------------------------------------------------------
+    # TRAINING LOOP
+    # ----------------------------------------------------------
+    early_stopper = EarlyStopping(patience=10)
+    best_val_acc  = 0.0
+    best_epoch    = 0
+
+    os.makedirs("models", exist_ok=True)
+    training_start = time.time()
 
     for epoch in range(epochs):
+        # --- Train ---
+        model.train()
         running_loss = 0.0
-        correct = 0
-        total = 0
-
-        # GPU-safe timing (hybrid also runs on CUDA)
-        if device.type == "cuda":
-            torch.cuda.synchronize()
-
-        epoch_start_time = time.time()
-
-        print(f"\nEpoch [{epoch+1}/{epochs}]")
+        correct = total = 0
 
         for features, labels in train_loader:
             features = features.to(device)
-            labels = labels.to(device)
+            labels   = labels.to(device)
 
             optimizer.zero_grad()
             outputs = model(features)
-            loss = criterion(outputs, labels)
+            loss    = criterion(outputs, labels)
             loss.backward()
+
+            # Gradient clipping for stability
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+
             optimizer.step()
+            scheduler.step()
 
             running_loss += loss.item()
-
-            preds = torch.argmax(outputs, dim=1)
+            preds    = torch.argmax(outputs, dim=1)
             correct += (preds == labels).sum().item()
-            total += labels.size(0)
+            total   += labels.size(0)
 
-        epoch_loss = running_loss / len(train_loader)
-        epoch_acc = 100.0 * correct / total
+        train_loss = running_loss / len(train_loader)
+        train_acc  = 100.0 * correct / total
 
-        print(f"Loss: {epoch_loss:.4f} | Accuracy: {epoch_acc:.2f}%")
-        if early_stopper.step(epoch_loss):
-            print("🛑 Early stopping triggered")
-            break
-        # --------------------------------------------------------
-        # Epoch Timing
-        # --------------------------------------------------------
-        if device.type == "cuda":
-            torch.cuda.synchronize()
+        # --- Validate ---
+        model.eval()
+        val_correct = val_total = 0
 
-        epoch_time = time.time() - epoch_start_time
-        epoch_times.append(epoch_time)
+        with torch.no_grad():
+            for features, labels in val_loader:
+                features = features.to(device)
+                labels   = labels.to(device)
+                outputs  = model(features)
+                preds    = torch.argmax(outputs, dim=1)
+                val_correct += (preds == labels).sum().item()
+                val_total   += labels.size(0)
 
-        avg_epoch_time = sum(epoch_times) / len(epoch_times)
+        val_acc = 100.0 * val_correct / val_total
+        current_lr = scheduler.get_last_lr()[0]
 
         print(
-            f"[TIME] Epoch {epoch+1}/{epochs} | "
-            f"Epoch Time: {epoch_time:.2f}s | "
-            f"Avg Epoch Time: {sum(epoch_times)/max(1, len(epoch_times)):.2f}s"
+            f"Epoch [{epoch+1:3d}/{epochs}] "
+            f"Loss: {train_loss:.4f} | "
+            f"Train: {train_acc:.1f}% | "
+            f"Val: {val_acc:.1f}% | "
+            f"LR: {current_lr:.2e}"
         )
 
-    # --------------------------------------------------------
-    # Total Training Time Summary
-    # --------------------------------------------------------
-    total_time = time.time() - training_start_time
+        # Save best checkpoint
+        if val_acc > best_val_acc:
+            best_val_acc = val_acc
+            best_epoch   = epoch + 1
+            torch.save(model.state_dict(), "models/hybrid.pth")
 
-    print("\n================ TRAINING TIME SUMMARY ================")
-    print(f"Total Training Time : {total_time:.2f} seconds")
-    print(f"Avg Epoch Time      : {sum(epoch_times)/len(epoch_times):.2f} seconds")
-    print("=======================================================")
+        # Early stopping on VAL accuracy
+        if early_stopper.step(val_acc):
+            print(f"\n[EARLY STOP] No improvement for {early_stopper.patience} epochs.")
+            break
 
-    # --------------------------------------------------------
-    # SAVE MODEL
-    # --------------------------------------------------------
-    os.makedirs("models", exist_ok=True)
-    torch.save(model.state_dict(), "models/hybrid.pth")
-    print("\nHybrid model training completed and saved.")
+    total_time = time.time() - training_start
+
+    print(f"\n{'='*50}")
+    print(f"Best Val Accuracy : {best_val_acc:.2f}% (epoch {best_epoch})")
+    print(f"Total Train Time  : {total_time:.1f}s")
+    print(f"Saved: models/hybrid.pth")
+    print(f"{'='*50}")
 
 
-# ------------------------------------------------------------
+# ============================================================
 # ENTRY POINT
-# ------------------------------------------------------------
+# ============================================================
 if __name__ == "__main__":
     train()

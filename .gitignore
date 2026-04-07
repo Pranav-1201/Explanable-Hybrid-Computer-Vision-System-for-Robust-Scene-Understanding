@@ -33,3 +33,10 @@ data/*.npz
 # Results & artifacts
 results/
 logs/
+
+venv/
+__pycache__/
+*.npz
+*.pth
+*.pt
+data/MIT_Indoor/
