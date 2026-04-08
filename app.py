@@ -111,6 +111,9 @@ classes          = []
 MODELS_DIR = os.path.join(ROOT, "models")
 DATA_DIR   = os.path.join(ROOT, "data", "MIT_Indoor")
 
+# If top-1 confidence is below this, flag prediction as out-of-scope
+CONFIDENCE_THRESHOLD = 0.30
+
 
 def discover_classes():
     for split in ("train", "test"):
@@ -295,6 +298,14 @@ def predict():
                 ],
                 "note": "Hybrid model uses HOG + SVM — Grad-CAM not applicable.",
             })
+
+        # ── Confidence-based rejection ──────────────────────
+        if result.get("confidence", 1.0) < CONFIDENCE_THRESHOLD:
+            result["original_prediction"] = result["prediction"]
+            result["prediction"] = "Unknown / Out of Scope"
+            result["out_of_scope"] = True
+        else:
+            result["out_of_scope"] = False
 
         result["original_image"] = ndarray_to_b64(image_rgb)
         return jsonify(result)
