@@ -130,8 +130,10 @@ def lbp_histogram(gray_img):
     Important for distinguishing e.g. tiled bathroom vs carpet
     flooring. Uniform LBP has n_points+2 bins.
     """
+    gray_uint8 = (gray_img * 255).astype(np.uint8)
+    assert gray_uint8.dtype == np.uint8, f"LBP input must be uint8, got {gray_uint8.dtype}"
     lbp = local_binary_pattern(
-        gray_img,
+        gray_uint8,
         P=LBP_N_POINTS,
         R=LBP_RADIUS,
         method="uniform"

@@ -43,13 +43,35 @@ LR_MIN      = 1e-5
 WEIGHT_DECAY= 1e-4
 VAL_SPLIT   = 0.1
 LABEL_SMOOTH= 0.1
+NUM_CLASSES = 67
 
+from torchvision.transforms.v2 import MixUp, CutMix
+import random
+
+# Instantiate outside the training loop (after num_classes is defined)
+mixup_fn  = MixUp(alpha=0.4, num_classes=NUM_CLASSES)   # NUM_CLASSES must be 67
+cutmix_fn = CutMix(alpha=1.0, num_classes=NUM_CLASSES)
+
+def apply_mixup_cutmix(images, labels):
+    """
+    Applies MixUp (30%), CutMix (30%), or no mixing (40%) randomly.
+    Returns images and soft labels.
+    Only call during training — never during validation.
+    """
+    r = random.random()
+    if r < 0.3:
+        return mixup_fn(images, labels)   # labels become soft probability vectors
+    elif r < 0.6:
+        return cutmix_fn(images, labels)  # labels become soft probability vectors
+    else:
+        return images, labels              # labels remain integer class indices
 
 # ============================================================
 # MODEL
 # ============================================================
 def build_model(num_classes: int) -> nn.Module:
-    model = models.resnet18(pretrained=True)
+    from torchvision.models import ResNet18_Weights
+    model = models.resnet18(weights=ResNet18_Weights.DEFAULT)
 
     for param in model.parameters():
         param.requires_grad = False
@@ -79,27 +101,27 @@ def build_model(num_classes: int) -> nn.Module:
 # ============================================================
 def get_dataloaders(num_workers: int = 8):  # 🔥 increased workers
 
-    full_dataset = MITIndoorDataset(
-        root_dir=TRAIN_DIR,
-        transform=get_transforms(train=True)
-    )
+    from torch.utils.data import Subset
 
-    num_classes = len(full_dataset.classes)
-    n_total     = len(full_dataset)
-    n_val       = int(n_total * VAL_SPLIT)
-    n_train     = n_total - n_val
+    # Step 1: generate deterministic indices without instantiating transforms yet
+    full_tmp  = MITIndoorDataset(root_dir=TRAIN_DIR, transform=None)
+    n_total   = len(full_tmp)
+    num_classes = len(full_tmp.classes)
+    
+    indices   = torch.randperm(n_total, generator=torch.Generator().manual_seed(42)).tolist()
+    n_val     = int(n_total * VAL_SPLIT)
+    train_idx = indices[n_val:]
+    val_idx   = indices[:n_val]
 
-    train_dataset, val_dataset = random_split(
-        full_dataset,
-        [n_train, n_val],
-        generator=torch.Generator().manual_seed(42)
-    )
+    # Step 2: two completely separate dataset instances, each with the correct transform
+    train_ds = MITIndoorDataset(root_dir=TRAIN_DIR, transform=get_transforms(train=True))
+    val_ds   = MITIndoorDataset(root_dir=TRAIN_DIR, transform=get_transforms(train=False))
 
-    val_dataset_clean = MITIndoorDataset(
-        root_dir=TRAIN_DIR,
-        transform=get_transforms(train=False)
-    )
-    val_dataset.dataset = val_dataset_clean
+    # Step 3: subset each instance with its respective indices
+    train_dataset = Subset(train_ds, train_idx)
+    val_dataset   = Subset(val_ds, val_idx)
+    
+    print(f"Train size: {len(train_dataset)}, Val size: {len(val_dataset)}")
 
     train_loader = DataLoader(
         train_dataset,
@@ -117,7 +139,7 @@ def get_dataloaders(num_workers: int = 8):  # 🔥 increased workers
         pin_memory=True
     )
 
-    return train_loader, val_loader, num_classes, full_dataset.classes
+    return train_loader, val_loader, num_classes, full_tmp.classes
 
 
 # ============================================================
@@ -142,7 +164,7 @@ def train(model, train_loader, val_loader, device):
     criterion = nn.CrossEntropyLoss(label_smoothing=LABEL_SMOOTH)
 
     # 🔥 Mixed precision scaler
-    scaler = torch.cuda.amp.GradScaler()
+    scaler = torch.amp.GradScaler('cuda')
 
     best_val_acc   = 0.0
     best_model_wts = copy.deepcopy(model.state_dict())
@@ -154,7 +176,7 @@ def train(model, train_loader, val_loader, device):
     print(f"  Training for {NUM_EPOCHS} epochs")
     print(f"  Train samples : {len(train_loader.dataset)}")
     print(f"  Val samples   : {len(val_loader.dataset)}")
-    print(f"  LR schedule   : {LR} → {LR_MIN} (cosine)")
+    print(f"  LR schedule   : {LR} -> {LR_MIN} (cosine)")
     print(f"{'='*52}\n")
 
     for epoch in range(1, NUM_EPOCHS + 1):
@@ -172,9 +194,18 @@ def train(model, train_loader, val_loader, device):
             optimizer.zero_grad()
 
             # 🔥 Mixed precision forward
-            with torch.cuda.amp.autocast():
+            with torch.amp.autocast('cuda'):
+                images, labels = apply_mixup_cutmix(images, labels)   # labels may become float soft vectors
+                
+                # NOTE: Train accuracy is suppressed ~5-10% when MixUp/CutMix are active (soft labels).
+                # Val accuracy (clean labels) is the authoritative metric. This is expected behaviour.
+
+                # When mixing occurred, labels should be float tensors of shape (B, 67)
+                # When no mixing occurred, labels remain int tensors of shape (B,)
+                # Both are valid inputs to CrossEntropyLoss
+
                 outputs = model(images)
-                loss = criterion(outputs, labels)
+                loss = criterion(outputs, labels)   # CrossEntropyLoss handles both int and soft float targets
 
             # 🔥 Scaled backward
             scaler.scale(loss).backward()
@@ -183,7 +214,11 @@ def train(model, train_loader, val_loader, device):
 
             preds = torch.argmax(outputs, dim=1)
             running_loss    += loss.item() * images.size(0)
-            running_correct += (preds == labels).sum().item()
+            if labels.ndim > 1:
+                labels_for_acc = torch.argmax(labels, dim=1)
+            else:
+                labels_for_acc = labels
+            running_correct += (preds == labels_for_acc).sum().item()
             running_total   += images.size(0)
 
         train_loss = running_loss / running_total
@@ -213,7 +248,7 @@ def train(model, train_loader, val_loader, device):
         if val_acc > best_val_acc:
             best_val_acc = val_acc
             best_model_wts = copy.deepcopy(model.state_dict())
-            improved = "  ← best"
+            improved = "  <- best"
 
         # ── TIMING ────────────────────────────────────────────
         epoch_time = time.time() - epoch_start

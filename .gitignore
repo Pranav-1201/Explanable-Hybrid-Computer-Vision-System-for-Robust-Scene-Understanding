@@ -40,3 +40,10 @@ __pycache__/
 *.pth
 *.pt
 data/MIT_Indoor/
+
+# Large pretrained weights and regenerable sklearn artifacts
+*.pth.tar
+data/hog_pca_model.pkl
+
+# Stray npm artifacts (no package.json in this repo)
+package-lock.json

@@ -30,6 +30,12 @@ import time
 import numpy as np
 import joblib
 
+npz_time  = os.path.getmtime('data/hog_features_train.npz') if os.path.exists('data/hog_features_train.npz') else 0
+svm_time  = os.path.getmtime('models/hybrid_svm.pkl') if os.path.exists('models/hybrid_svm.pkl') else 0
+if svm_time > 0 and svm_time < npz_time:
+    print("[WARNING] hybrid_svm.pkl was trained on HOG features that predate the LBP fix.")
+    print("          Re-run train_hybrid_svm.py to retrain on corrected features.")
+
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from sklearn.preprocessing  import StandardScaler

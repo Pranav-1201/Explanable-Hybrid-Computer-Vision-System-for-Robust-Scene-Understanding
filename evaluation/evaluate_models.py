@@ -70,19 +70,8 @@ def evaluate_baseline():
     # --------------------------------------------------------
     model = CNNBaseline(num_classes).to(device)
 
-    checkpoint = torch.load("models/baseline.pth", map_location=device)
-
-    # Fix key mismatch (add "model." prefix)
-    new_state_dict = {}
-    for k, v in checkpoint.items():
-        if not k.startswith("model."):
-            new_state_dict["model." + k] = v
-        else:
-            new_state_dict[k] = v
-
-    model.load_state_dict(new_state_dict)
-
-    model.eval()
+    from utils.checkpoint import load_checkpoint
+    model = load_checkpoint("models/baseline.pth", model, device=device)
 
     y_true, y_pred = [], []
 
@@ -242,9 +231,152 @@ def evaluate_hybrid():
 
 
 # ------------------------------------------------------------
+# PHASE 2 EVALUATION
+# ------------------------------------------------------------
+def evaluate_phase2():
+    print("\n================ PHASE 2 (ResNet-50) =================")
+    checkpoint_path = "models/phase2_best.pth"
+    if not os.path.exists(checkpoint_path):
+        print("Model not found. Skipping Phase 2 evaluation.")
+        return
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    from models.cnn_baseline import CNNBaseline
+    from inference.tta import tta_predict, single_predict
+    from data.dataset_loader import MITIndoorDataset
+    from utils.checkpoint import load_checkpoint
+
+    test_dataset = MITIndoorDataset(root_dir="data/MIT_Indoor/test", transform=None)
+    num_classes = len(test_dataset.classes)
+    
+    checkpoint = torch.load(checkpoint_path, map_location=device)
+    backbone = checkpoint.get('backbone', 'resnet50_places365')
+    
+    raw_model = CNNBaseline(num_classes, backbone=backbone).to(device)
+    raw_model = load_checkpoint(checkpoint_path, raw_model, device=device)
+    raw_model.eval()
+
+    use_ema = checkpoint.get('ema_state') is not None
+    if use_ema:
+        ema_model = CNNBaseline(num_classes, backbone=backbone).to(device)
+        ema_model = load_checkpoint(checkpoint_path, ema_model, load_ema=True, device=device)
+        ema_model.eval()
+    else:
+        ema_model = None
+
+    results = {
+        'raw': {'correct': 0, 'total': 0},
+        'raw_tta': {'correct': 0, 'total': 0},
+        'ema': {'correct': 0, 'total': 0},
+        'ema_tta': {'correct': 0, 'total': 0},
+    }
+
+    print("Evaluating Phase 2 models... (this may take a while with TTA)")
+    for i in range(len(test_dataset)):
+        pil_img, label = test_dataset[i]
+        
+        # Raw single
+        probs_raw = single_predict(raw_model, pil_img, device)
+        if int(torch.argmax(probs_raw)) == label: results['raw']['correct'] += 1
+        results['raw']['total'] += 1
+
+        # Raw TTA
+        probs_raw_tta = tta_predict(raw_model, pil_img, device)
+        if int(torch.argmax(probs_raw_tta)) == label: results['raw_tta']['correct'] += 1
+        results['raw_tta']['total'] += 1
+
+        if use_ema:
+            # EMA single
+            probs_ema = single_predict(ema_model, pil_img, device)
+            if int(torch.argmax(probs_ema)) == label: results['ema']['correct'] += 1
+            results['ema']['total'] += 1
+
+            # EMA TTA
+            probs_ema_tta = tta_predict(ema_model, pil_img, device)
+            if int(torch.argmax(probs_ema_tta)) == label: results['ema_tta']['correct'] += 1
+            results['ema_tta']['total'] += 1
+
+    print("--- Phase 2 Summary ---")
+    print(f"Raw Model Accuracy      : {results['raw']['correct'] / results['raw']['total'] * 100:.2f}%")
+    print(f"Raw Model + TTA Accuracy: {results['raw_tta']['correct'] / results['raw_tta']['total'] * 100:.2f}%")
+    
+    if use_ema:
+        print(f"EMA Model Accuracy      : {results['ema']['correct'] / results['ema']['total'] * 100:.2f}%")
+        print(f"EMA Model + TTA Accuracy: {results['ema_tta']['correct'] / results['ema_tta']['total'] * 100:.2f}%")
+
+# ------------------------------------------------------------
+# FUSION MODEL EVALUATION
+# ------------------------------------------------------------
+def evaluate_fusion():
+    print("\n================ HYBRID FUSION MODEL =================")
+    checkpoint_path = "models/fusion_best.pth"
+    if not os.path.exists(checkpoint_path):
+        print("Fusion model not found. Skipping.")
+        return None
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    
+    # Needs training/train_fusion.py to be importable for FusionDataset
+    from training.train_fusion import FusionDataset
+    from models.hybrid_fusion import HybridFusion
+    from sklearn.metrics import f1_score
+    
+    test_ds = FusionDataset('test')
+    test_loader = DataLoader(test_ds, batch_size=256, shuffle=False)
+    
+    num_classes = 67
+    
+    checkpoint = torch.load(checkpoint_path, map_location=device)
+    model = HybridFusion(cnn_dim=2048, hog_dim=512, num_classes=num_classes).to(device)
+    model.load_state_dict(checkpoint['fusion_state'])
+    model.eval()
+
+    y_true, y_pred, y_pred_ablated = [], [], []
+
+    with torch.no_grad():
+        for cnn_feat, hog_feat, labels in test_loader:
+            cnn_feat, hog_feat = cnn_feat.to(device), hog_feat.to(device)
+            
+            # Normal forward
+            logits = model(cnn_feat, hog_feat)
+            preds = torch.argmax(logits, dim=1)
+            
+            # Ablated forward
+            logits_ablated = model.ablate_hog(cnn_feat)
+            preds_ablated = torch.argmax(logits_ablated, dim=1)
+            
+            y_true.extend(labels.cpu().numpy())
+            y_pred.extend(preds.cpu().numpy())
+            y_pred_ablated.extend(preds_ablated.cpu().numpy())
+
+    acc = accuracy_score(y_true, y_pred)
+    acc_ablated = accuracy_score(y_true, y_pred_ablated)
+    
+    print(f"Fusion (CNN + HOG) accuracy: {acc * 100:.2f}%")
+    print(f"Fusion (CNN only, HOG=0):    {acc_ablated * 100:.2f}%")
+    print(f"HOG contribution:            +{(acc - acc_ablated) * 100:.2f}%")
+    
+    # Hardest classes
+    f1_scores = f1_score(y_true, y_pred, average=None)
+    hardest_idx = f1_scores.argsort()[:5]
+    print("\nTop-5 Hardest Classes (Lowest F1):")
+    # For class names we need MITIndoorDataset
+    from data.dataset_loader import MITIndoorDataset
+    dataset = MITIndoorDataset("data/MIT_Indoor/test", transform=None)
+    classes = dataset.classes
+    for idx in hardest_idx:
+        print(f"  {classes[idx]}: F1 = {f1_scores[idx]:.3f}")
+
+
+
+
+# ------------------------------------------------------------
 # ENTRY POINT
 # ------------------------------------------------------------
 if __name__ == "__main__":
     evaluate_baseline()
     evaluate_hybrid()
     evaluate_transfer_model()
+    evaluate_phase2()
+    evaluate_fusion()

@@ -113,7 +113,7 @@ def main():
     )
 
     # Mixed precision scaler (RTX acceleration)
-    scaler = torch.cuda.amp.GradScaler()
+    scaler = torch.amp.GradScaler('cuda')
 
     total_time = 0
 
@@ -147,7 +147,7 @@ def main():
             optimizer.zero_grad()
 
             # Mixed precision forward pass
-            with torch.cuda.amp.autocast():
+            with torch.amp.autocast('cuda'):
 
                 outputs = model(images)
 

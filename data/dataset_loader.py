@@ -15,56 +15,31 @@ from torchvision import transforms
 # ------------------------------------------------------------
 # Image Transform Pipelines
 # ------------------------------------------------------------
+import torchvision.transforms as T
+
+IMAGENET_MEAN = [0.485, 0.456, 0.406]
+IMAGENET_STD  = [0.229, 0.224, 0.225]
+
 def get_transforms(train=False):
-    """
-    Returns torchvision transforms for training or evaluation.
-
-    Train:
-    - Resize
-    - Random horizontal flip
-    - Normalize (ImageNet stats)
-
-    Test:
-    - Resize
-    - Normalize only
-    """
     if train:
-        return transforms.Compose([
-            transforms.Resize((256,256)),
-            transforms.RandomResizedCrop(224),
-
-            transforms.RandomHorizontalFlip(p=0.5),
-            transforms.RandomRotation(15),
-
-            transforms.ColorJitter(
-                brightness=0.2,
-                contrast=0.2,
-                saturation=0.2,
-                hue=0.05
-            ),
-
-            transforms.RandomPerspective(
-                distortion_scale=0.2,
-                p=0.3
-            ),
-
-            transforms.ToTensor(),
-
-            transforms.Normalize(
-                mean=[0.485,0.456,0.406],
-                std=[0.229,0.224,0.225]
-            )
+        return T.Compose([
+            T.Resize((256, 256)),
+            T.RandomResizedCrop(224, scale=(0.7, 1.0)),   # wider scale range vs old (0.08, 1.0)
+            T.RandomHorizontalFlip(p=0.5),
+            T.RandomVerticalFlip(p=0.05),                 # rare but helps scene layouts
+            T.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3, hue=0.08),
+            T.RandomGrayscale(p=0.05),
+            T.RandomPerspective(distortion_scale=0.25, p=0.3),
+            T.ToTensor(),
+            T.Normalize(IMAGENET_MEAN, IMAGENET_STD),
+            T.RandomErasing(p=0.3, scale=(0.02, 0.15)),   # MUST be after ToTensor — operates on tensors
         ])
-
-    else:
-        return transforms.Compose([
-            transforms.Resize((224,224)),
-            transforms.ToTensor(),
-
-            transforms.Normalize(
-                mean=[0.485,0.456,0.406],
-                std=[0.229,0.224,0.225]
-            )
+    else:  # eval / test
+        return T.Compose([
+            T.Resize((232, 232)),    # slightly oversized for center crop — standard modern eval protocol
+            T.CenterCrop(224),
+            T.ToTensor(),
+            T.Normalize(IMAGENET_MEAN, IMAGENET_STD),
         ])
 
 

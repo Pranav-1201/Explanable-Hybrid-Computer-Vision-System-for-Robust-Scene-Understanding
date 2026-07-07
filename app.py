@@ -94,7 +94,8 @@ def compute_all_features(image_rgb: np.ndarray) -> np.ndarray:
     moments_feat = np.array(moments, dtype=np.float32)
 
     # 4. LBP texture → 26-d
-    lbp = local_binary_pattern(gray, P=LBP_N_POINTS, R=LBP_RADIUS, method="uniform")
+    gray_uint8 = (gray * 255).astype(np.uint8)
+    lbp = local_binary_pattern(gray_uint8, P=LBP_N_POINTS, R=LBP_RADIUS, method="uniform")
     n_bins = LBP_N_POINTS + 2
     lbp_hist, _ = np.histogram(lbp.ravel(), bins=n_bins,
                                 range=(0, n_bins), density=True)
@@ -106,6 +107,9 @@ def compute_all_features(image_rgb: np.ndarray) -> np.ndarray:
 # ── Global model handles ───────────────────────────────────────
 baseline_model   = None
 hybrid_pipeline  = None   # sklearn Pipeline (Scaler → PCA → LinearSVC)
+fusion_model     = None
+fusion_cnn       = None
+fusion_pca       = None
 classes          = []
 
 MODELS_DIR = os.path.join(ROOT, "models")
@@ -136,18 +140,8 @@ def load_models():
         try:
             baseline_model = CNNBaseline(num_classes)
 
-            checkpoint = torch.load(baseline_path, map_location=DEVICE)
-
-            # Fix key mismatch
-            new_state_dict = {}
-            for k, v in checkpoint.items():
-                if not k.startswith("model."):
-                    new_state_dict["model." + k] = v
-                else:
-                    new_state_dict[k] = v
-
-            baseline_model.load_state_dict(new_state_dict)
-            baseline_model.to(DEVICE).eval()
+            from utils.checkpoint import load_checkpoint
+            baseline_model = load_checkpoint(baseline_path, baseline_model, device=DEVICE)
 
             print(f"[INFO] Loaded CNN baseline ({num_classes} classes)")
             baseline_model.to(DEVICE).eval()
@@ -155,6 +149,18 @@ def load_models():
         except Exception as e:
             print(f"[WARN] Could not load baseline model: {e}")
             baseline_model = None
+
+    # Load temperature scaler at startup
+    global temperature_scaler
+    temperature_scaler = None
+    TEMP_PATH = os.path.join(MODELS_DIR, 'temperature_cnn.json')
+    if os.path.exists(TEMP_PATH):
+        from calibration.temperature_scaling import TemperatureScaler
+        temperature_scaler = TemperatureScaler.load(TEMP_PATH)
+        print(f"[LOADED] Temperature scaler  T={temperature_scaler.T:.4f}")
+    else:
+        print("[INFO] No temperature scaler found. Confidence scores are uncalibrated.")
+        print(f"       Run: python calibration/run_calibration.py")
 
     # ── Hybrid SVM Pipeline ───────────────────────────────────
     # Tries hybrid_svm.pkl first, falls back to hybrid_svm_pipeline.pkl
@@ -168,6 +174,35 @@ def load_models():
             except Exception as e:
                 print(f"[WARN] Could not load {svm_name}: {e}")
                 hybrid_pipeline = None
+
+    # ── Fusion Model (Architecture B) ─────────────────────────
+    fusion_path = os.path.join(MODELS_DIR, "fusion_best.pth")
+    pca_path = os.path.join(ROOT, "data", "hog_pca_model.pkl")
+    if os.path.exists(fusion_path) and os.path.exists(pca_path):
+        try:
+            import joblib
+            fusion_pca = joblib.load(pca_path)  # scaler + pca bundle
+            
+            # Load CNN + fusion model from checkpoint
+            from models.hybrid_fusion import HybridFusion
+            from models.cnn_baseline import CNNBaseline
+            
+            ckpt = torch.load(fusion_path, map_location=DEVICE)
+            
+            fusion_cnn = CNNBaseline(num_classes)
+            fusion_cnn.load_state_dict(ckpt['cnn_state'])
+            fusion_cnn.to(DEVICE).eval()
+            
+            fusion_model = HybridFusion(cnn_dim=2048, hog_dim=512, num_classes=num_classes)
+            fusion_model.load_state_dict(ckpt['fusion_state'])
+            fusion_model.to(DEVICE).eval()
+            
+            print("[LOADED] Hybrid Fusion model (Architecture B)")
+        except Exception as e:
+            print(f"[WARNING] Could not load fusion model: {e}")
+            fusion_model = None
+            fusion_cnn = None
+            fusion_pca = None
 
 
 load_models()
@@ -237,6 +272,14 @@ def predict():
     if model_type == "hybrid" and hybrid_pipeline is None:
         return jsonify({"error": "Hybrid SVM model not loaded. "
                                  "Run: python training/train_hybrid_svm.py"}), 503
+    if model_type == "fusion":
+        if fusion_model is None:
+            # Graceful fallback to baseline
+            if baseline_model is not None:
+                print("[WARN] Fusion model not loaded, falling back to baseline")
+                model_type = "baseline"
+            else:
+                return jsonify({"error": "Fusion model and baseline model not loaded."}), 503
     if not classes:
         return jsonify({"error": "No classes found. "
                                  "Check data/MIT_Indoor/train exists."}), 503
@@ -253,10 +296,24 @@ def predict():
             input_tensor = transform(pil_img.convert("RGB").resize((224, 224)))
             input_tensor = input_tensor.unsqueeze(0).float().to(DEVICE)
 
-            with torch.no_grad():
-                logits = baseline_model(input_tensor)
+            from inference.tta import tta_predict, single_predict
+            tta_param = request.args.get("tta", "0")
+            
+            if tta_param == "1":
+                try:
+                    probs = tta_predict(baseline_model, pil_img.convert("RGB"), DEVICE, scaler=temperature_scaler).numpy()
+                    result["tta_used"] = True
+                except Exception as e:
+                    probs = single_predict(baseline_model, pil_img.convert("RGB"), DEVICE, scaler=temperature_scaler).numpy()
+                    result["tta_used"] = False
+                    result["tta_error"] = str(e)
+            else:
+                probs = single_predict(baseline_model, pil_img.convert("RGB"), DEVICE, scaler=temperature_scaler).numpy()
+                result["tta_used"] = False
 
-            probs    = torch.softmax(logits, dim=1)[0].cpu().numpy()
+            result["calibrated"] = temperature_scaler is not None
+            result["temperature"] = temperature_scaler.T if temperature_scaler else 1.0
+
             pred_idx = int(np.argmax(probs))
             top5_idx = np.argsort(probs)[::-1][:5]
 
@@ -297,6 +354,39 @@ def predict():
                     for i in top5_idx
                 ],
                 "note": "Hybrid model uses HOG + SVM — Grad-CAM not applicable.",
+            })
+
+        # ── FUSION MODEL path ──────────────────────────────────
+        elif model_type == "fusion":
+            # 1. HOG features -> PCA
+            hog_feat = compute_all_features(image_rgb).reshape(1, -1)
+            scaler = fusion_pca['scaler']
+            pca = fusion_pca['pca']
+            hog_scaled = scaler.transform(hog_feat)
+            hog_pca = pca.transform(hog_scaled)
+            hog_tensor = torch.from_numpy(hog_pca).float().to(DEVICE)
+            
+            # 2. CNN embedding
+            transform = get_transforms(train=False)
+            input_tensor = transform(pil_img.convert("RGB").resize((224, 224)))
+            input_tensor = input_tensor.unsqueeze(0).float().to(DEVICE)
+            
+            with torch.no_grad():
+                cnn_emb = fusion_cnn.get_embedding(input_tensor)
+                logits = fusion_model(cnn_emb, hog_tensor)
+                probs = torch.softmax(logits, dim=1)[0].cpu().numpy()
+                
+            pred_idx = int(np.argmax(probs))
+            top5_idx = np.argsort(probs)[::-1][:5]
+            
+            result.update({
+                "prediction": classes[pred_idx],
+                "confidence": float(probs[pred_idx]),
+                "top5": [
+                    {"class": classes[i], "prob": float(probs[i])}
+                    for i in top5_idx
+                ],
+                "note": "Fusion model prediction.",
             })
 
         # ── Confidence-based rejection ──────────────────────

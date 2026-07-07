@@ -787,8 +787,8 @@
             ResNet-18 + Grad-CAM
           </button>
           <button class="model-btn" id="btn-hybrid" onclick="selectModel('hybrid')">
-            <span>Hybrid MLP</span>
-            HOG + Neural Net
+            <span>Hybrid SVM</span>
+            HOG + LinearSVC
           </button>
         </div>
 
@@ -953,7 +953,7 @@
     panel.style.display = "block";
 
     const confPct = (data.confidence * 100).toFixed(1);
-    const modelLabel = data.model === "baseline" ? "CNN BASELINE" : "HYBRID MLP";
+    const modelLabel = data.model === "baseline" ? "CNN BASELINE" : "HYBRID SVM";
     const isOOS = data.out_of_scope === true;
 
     let html = ``;
