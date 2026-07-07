@@ -50,9 +50,10 @@ os.makedirs("results", exist_ok=True)
 # ------------------------------------------------------------
 # LOAD BASELINE MODEL
 # ------------------------------------------------------------
-model = CNNBaseline(num_classes)
-
+# baseline.pth is the ResNet-18 from train_baseline.build_model (audit N3).
+from training.train_baseline import build_model
 from utils.checkpoint import load_checkpoint
+model = build_model(num_classes)
 model = load_checkpoint("models/baseline.pth", model, device=device)
 
 
@@ -76,7 +77,7 @@ image_np = (image_np - image_np.min()) / (image_np.max() - image_np.min())
 # ------------------------------------------------------------
 # GRAD-CAM
 # ------------------------------------------------------------
-target_layer = model.model.layer4[-1]
+target_layer = model.layer4[-1]
 
 cam = GradCAM(
     model=model,

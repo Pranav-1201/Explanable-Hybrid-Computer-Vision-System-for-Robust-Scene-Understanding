@@ -113,8 +113,10 @@ def main():
     # --------------------------------------------------------
     # LOAD BASELINE MODEL
     # --------------------------------------------------------
-    model = CNNBaseline(num_classes)
+    # baseline.pth is the ResNet-18 from train_baseline.build_model (audit N3).
+    from training.train_baseline import build_model
     from utils.checkpoint import load_checkpoint
+    model = build_model(num_classes)
     model = load_checkpoint("models/baseline.pth", model, device=device)
 
     test_root = "data/MIT_Indoor/test"

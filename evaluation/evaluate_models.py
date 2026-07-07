@@ -68,9 +68,11 @@ def evaluate_baseline():
     # --------------------------------------------------------
     # MODEL
     # --------------------------------------------------------
-    model = CNNBaseline(num_classes).to(device)
-
+    # baseline.pth is the ResNet-18 from train_baseline.build_model, not the
+    # ResNet-50 CNNBaseline (audit N3). Build the matching architecture.
+    from training.train_baseline import build_model
     from utils.checkpoint import load_checkpoint
+    model = build_model(num_classes).to(device)
     model = load_checkpoint("models/baseline.pth", model, device=device)
 
     y_true, y_pred = [], []
