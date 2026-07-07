@@ -22,15 +22,30 @@ BASE_LR_B_FUSION  = 1e-4
 LABEL_SMOOTH      = 0.1
 NUM_CLASSES       = 67
 SEED              = 42
+VAL_SPLIT         = 0.1
 
 class FusionDataset(torch.utils.data.Dataset):
-    def __init__(self, split):
-        data = np.load(f'data/fusion_{split}.npz')
+    def __init__(self, split, data_dir='data'):
+        data = np.load(os.path.join(data_dir, f'fusion_{split}.npz'))
         self.cnn    = torch.from_numpy(data['cnn']).float()
         self.hog    = torch.from_numpy(data['hog']).float()
         self.labels = torch.from_numpy(data['labels']).long()
     def __len__(self):  return len(self.labels)
     def __getitem__(self, i): return self.cnn[i], self.hog[i], self.labels[i]
+
+def split_train_val(n_total, val_split=VAL_SPLIT, seed=SEED):
+    """Deterministic train/val index split over the fusion train set.
+
+    Uses the identical permutation (torch.randperm, seed 42, first 10% = val)
+    as train_baseline.py / train_phase2.py. Fusion features are extracted in
+    dataset order (shuffle=False upstream), so row i of fusion_train.npz is
+    dataset index i — the fusion val set is therefore the exact same images
+    the CNN validated on. The test set must never be touched during training;
+    it is reserved for evaluation/evaluate_models.py.
+    """
+    indices = torch.randperm(n_total, generator=torch.Generator().manual_seed(seed)).tolist()
+    n_val   = int(n_total * val_split)
+    return indices[n_val:], indices[:n_val]
 
 def train_epoch(model, loader, optimizer, criterion, device):
     model.train()
@@ -73,8 +88,13 @@ if __name__ == '__main__':
         sys.exit(1)
 
     if os.environ.get('DRY_RUN') != '1':
-        train_ds = FusionDataset('train')
-        val_ds   = FusionDataset('test')
+        from torch.utils.data import Subset
+        full_train = FusionDataset('train')
+        train_idx, val_idx = split_train_val(len(full_train))
+        train_ds = Subset(full_train, train_idx)
+        val_ds   = Subset(full_train, val_idx)
+        print(f"Fusion split (no test leak): train={len(train_ds)}  val={len(val_ds)}  "
+              f"(val carved from train set, seed {SEED})")
         train_loader = torch.utils.data.DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True)
         val_loader   = torch.utils.data.DataLoader(val_ds, batch_size=BATCH_SIZE, shuffle=False)
         
