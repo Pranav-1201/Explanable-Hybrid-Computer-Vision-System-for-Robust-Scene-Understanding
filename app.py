@@ -105,12 +105,27 @@ def compute_all_features(image_rgb: np.ndarray) -> np.ndarray:
 
 
 # ── Global model handles ───────────────────────────────────────
-baseline_model   = None
-hybrid_pipeline  = None   # sklearn Pipeline (Scaler → PCA → LinearSVC)
-fusion_model     = None
-fusion_cnn       = None
-fusion_pca       = None
-classes          = []
+baseline_model        = None
+baseline_target_layer = None   # Grad-CAM target layer, set to match served arch
+hybrid_pipeline       = None   # sklearn Pipeline (Scaler → PCA → LinearSVC)
+fusion_model          = None
+fusion_cnn            = None
+fusion_pca            = None
+classes               = []
+
+
+def build_baseline_model(num_classes: int):
+    """Build the architecture matching models/baseline.pth and return
+    (model, gradcam_target_layer).
+
+    baseline.pth is a raw ResNet-18 state_dict from
+    training/train_baseline.build_model — loading it into CNNBaseline
+    (ResNet-50) was the serving crash (audit N3). When Phase 2 lands (B-5),
+    point the app at phase2_best.pth and build the ResNet-50 instead.
+    """
+    from training.train_baseline import build_model
+    model = build_model(num_classes)
+    return model, model.layer4[-1]
 
 MODELS_DIR = os.path.join(ROOT, "models")
 DATA_DIR   = os.path.join(ROOT, "data", "MIT_Indoor")
@@ -129,26 +144,25 @@ def discover_classes():
 
 
 def load_models():
-    global baseline_model, hybrid_pipeline, classes
+    global baseline_model, hybrid_pipeline, classes, baseline_target_layer
+    global fusion_model, fusion_cnn, fusion_pca
 
     classes     = discover_classes()
     num_classes = max(len(classes), 1)
 
     # ── Baseline CNN ──────────────────────────────────────────
+    from utils.checkpoint import load_checkpoint
     baseline_path = os.path.join(MODELS_DIR, "baseline.pth")
     if os.path.exists(baseline_path):
         try:
-            baseline_model = CNNBaseline(num_classes)
-
-            from utils.checkpoint import load_checkpoint
+            baseline_model, baseline_target_layer = build_baseline_model(num_classes)
             baseline_model = load_checkpoint(baseline_path, baseline_model, device=DEVICE)
-
-            print(f"[INFO] Loaded CNN baseline ({num_classes} classes)")
             baseline_model.to(DEVICE).eval()
-            print(f"[INFO] Loaded CNN baseline ({num_classes} classes)")
+            print(f"[INFO] Loaded CNN baseline: ResNet-18 ({num_classes} classes)")
         except Exception as e:
             print(f"[WARN] Could not load baseline model: {e}")
             baseline_model = None
+            baseline_target_layer = None
 
     # Load temperature scaler at startup
     global temperature_scaler
@@ -180,13 +194,11 @@ def load_models():
     pca_path = os.path.join(ROOT, "data", "hog_pca_model.pkl")
     if os.path.exists(fusion_path) and os.path.exists(pca_path):
         try:
-            import joblib
             fusion_pca = joblib.load(pca_path)  # scaler + pca bundle
-            
+
             # Load CNN + fusion model from checkpoint
             from models.hybrid_fusion import HybridFusion
-            from models.cnn_baseline import CNNBaseline
-            
+
             ckpt = torch.load(fusion_path, map_location=DEVICE)
             
             fusion_cnn = CNNBaseline(num_classes)
@@ -329,7 +341,7 @@ def predict():
             try:
                 result["gradcam"] = run_gradcam(
                     baseline_model, input_tensor,
-                    baseline_model.model.layer4[-1],
+                    baseline_target_layer,
                     pred_idx, image_f
                 )
             except Exception as e:
