@@ -217,4 +217,6 @@ def train():
 
 if __name__ == "__main__":
     if os.environ.get('DRY_RUN') != '1':
+        from utils.require_venv import require_project_venv
+        require_project_venv(require_cuda=True)
         train()

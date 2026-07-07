@@ -283,6 +283,9 @@ def train(model, train_loader, val_loader, device):
 # ============================================================
 if __name__ == "__main__":
 
+    from utils.require_venv import require_project_venv
+    require_project_venv(require_cuda=True)
+
     print("=" * 60)
     print("  BASELINE CNN TRAINING — ResNet-18 Fine-Tuning")
     print("=" * 60)

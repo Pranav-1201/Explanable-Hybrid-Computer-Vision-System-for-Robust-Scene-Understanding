@@ -76,6 +76,9 @@ def val_epoch(model, loader, criterion, device):
     return total_loss / len(loader), correct / total
 
 if __name__ == '__main__':
+    from utils.require_venv import require_project_venv
+    require_project_venv(require_cuda=True)
+
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     torch.manual_seed(SEED)
     
