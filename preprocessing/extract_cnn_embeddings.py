@@ -5,7 +5,10 @@ Used by both Architecture A (CNN-embedding SVM) and Architecture B (fusion MLP).
 Saves: data/cnn_embeddings_train.npz, data/cnn_embeddings_test.npz
 Each file contains: embeddings (N, 2048), labels (N,)
 """
-import torch, numpy as np, os, argparse
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+import torch, numpy as np, argparse
 from tqdm import tqdm
 from torch.utils.data import DataLoader
 from data.dataset_loader import MITIndoorDataset, get_transforms
@@ -44,15 +47,24 @@ if __name__ == '__main__':
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Device: {device}")
 
-    # Load best available checkpoint
-    model = CNNBaseline(67)
+    # Load best available checkpoint, using the winning raw/EMA weights and the
+    # backbone recorded at training time. Fusion (B-7) must train on the same
+    # weights that are served (EMA), not the weaker raw weights.
     if os.path.exists(CHECKPOINT_PATH):
-        load_checkpoint(CHECKPOINT_PATH, model)
-        print(f"[LOADED] Phase 2 checkpoint: {CHECKPOINT_PATH}")
+        meta     = torch.load(CHECKPOINT_PATH, map_location='cpu', weights_only=True)
+        backbone = meta.get('backbone', 'resnet50_places365_local')
+        load_ema = bool(meta.get('best_is_ema', False))
+        model = CNNBaseline(67, backbone=backbone)
+        load_checkpoint(CHECKPOINT_PATH, model, load_ema=load_ema)
+        print(f"[LOADED] Phase 2 checkpoint: {CHECKPOINT_PATH} "
+              f"(backbone={backbone}, load_ema={load_ema}, "
+              f"val_acc={meta.get('val_acc', float('nan')):.2f}%)")
     elif os.path.exists(FALLBACK_PATH):
+        model = CNNBaseline(67)
         load_checkpoint(FALLBACK_PATH, model)
         print(f"[LOADED] Phase 1 fallback checkpoint: {FALLBACK_PATH}")
     else:
+        model = CNNBaseline(67)
         print("[WARNING] No trained checkpoint found. Using random weights.")
         print("         Embeddings will be meaningless. Train a model first.")
     model.to(device)
