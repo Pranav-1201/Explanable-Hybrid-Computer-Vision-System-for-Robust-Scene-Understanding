@@ -15,7 +15,7 @@ Usage:
 import numpy as np
 import json
 import torch
-from scipy.optimize import minimize
+from scipy.optimize import minimize_scalar
 
 
 class TemperatureScaler:
@@ -46,10 +46,12 @@ class TemperatureScaler:
             correct = probs[np.arange(len(labels_np)), labels_np]
             return -np.log(correct + 1e-8).mean()
 
-        result   = minimize(nll, x0=[1.5], method='L-BFGS-B',
-                            bounds=[(0.05, 10.0)],
-                            options={'ftol': 1e-10, 'gtol': 1e-8})
-        self.T   = float(result.x[0])
+        # 1-D bounded scalar search — robust where L-BFGS-B stalled at x0 and
+        # returned a temperature worse than T=1 (observed on the underconfident
+        # phase-2 model: it needs T<1 to sharpen, but L-BFGS-B stayed at 1.5).
+        result = minimize_scalar(lambda T: nll([T]), bounds=(0.05, 10.0),
+                                 method='bounded', options={'xatol': 1e-4})
+        self.T   = float(result.x)
         self.fitted = True
 
         nll_before = nll([1.0])
@@ -77,7 +79,7 @@ class TemperatureScaler:
     def save(self, path: str):
         with open(path, 'w') as f:
             json.dump({'temperature': self.T, 'fitted': self.fitted}, f, indent=2)
-        print(f"[SAVED] Temperature scaler → {path}  (T={self.T:.4f})")
+        print(f"[SAVED] Temperature scaler -> {path}  (T={self.T:.4f})")
 
     @classmethod
     def load(cls, path: str) -> 'TemperatureScaler':

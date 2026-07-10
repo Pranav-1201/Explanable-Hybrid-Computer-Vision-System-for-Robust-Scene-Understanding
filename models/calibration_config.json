@@ -1,0 +1,7 @@
+{
+  "temperature": 0.5142009772427241,
+  "rejection_threshold": 0.47802734375,
+  "threshold_basis": "5th pctl of calibrated max-prob over correct val preds",
+  "ece_before": 0.3337321494942281,
+  "ece_after": 0.05567590514225744
+}

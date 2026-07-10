@@ -115,16 +115,31 @@ classes               = []
 
 
 def build_baseline_model(num_classes: int):
-    """Build the architecture matching models/baseline.pth and return
-    (model, gradcam_target_layer).
+    """Return (loaded_model, gradcam_target_layer) for the best available CNN.
 
-    baseline.pth is a raw ResNet-18 state_dict from
-    training/train_baseline.build_model — loading it into CNNBaseline
-    (ResNet-50) was the serving crash (audit N3). When Phase 2 lands (B-5),
-    point the app at phase2_best.pth and build the ResNet-50 instead.
+    Prefers the Phase-2 ResNet-50 (Places365) at models/phase2_best.pth, loading
+    the winning raw/EMA weights recorded in the checkpoint (best_is_ema). Falls
+    back to the ResNet-18 baseline.pth (train_baseline.build_model) when Phase 2
+    is absent. baseline.pth is a raw ResNet-18 state_dict — loading it into
+    CNNBaseline (ResNet-50) was the serving crash (audit N3).
     """
+    from utils.checkpoint import load_checkpoint
+    phase2 = os.path.join(MODELS_DIR, "phase2_best.pth")
+    if os.path.exists(phase2):
+        from models.cnn_baseline import CNNBaseline
+        meta     = torch.load(phase2, map_location="cpu", weights_only=True)
+        backbone = meta.get("backbone", "resnet50_places365_local")
+        load_ema = bool(meta.get("best_is_ema", False))
+        model = CNNBaseline(num_classes, backbone=backbone)
+        load_checkpoint(phase2, model, device=DEVICE, load_ema=load_ema)
+        print(f"[INFO] Serving Phase-2 {backbone} (load_ema={load_ema}, "
+              f"val_acc={meta.get('val_acc', float('nan')):.2f}%)")
+        return model, model.model.layer4[-1]
+
     from training.train_baseline import build_model
     model = build_model(num_classes)
+    load_checkpoint(os.path.join(MODELS_DIR, "baseline.pth"), model, device=DEVICE)
+    print("[INFO] Serving ResNet-18 baseline (phase2_best.pth not found)")
     return model, model.layer4[-1]
 
 MODELS_DIR = os.path.join(ROOT, "models")
@@ -150,15 +165,13 @@ def load_models():
     classes     = discover_classes()
     num_classes = max(len(classes), 1)
 
-    # ── Baseline CNN ──────────────────────────────────────────
-    from utils.checkpoint import load_checkpoint
+    # ── Baseline CNN (Phase-2 ResNet-50 if present, else ResNet-18) ────────
+    phase2_path   = os.path.join(MODELS_DIR, "phase2_best.pth")
     baseline_path = os.path.join(MODELS_DIR, "baseline.pth")
-    if os.path.exists(baseline_path):
+    if os.path.exists(phase2_path) or os.path.exists(baseline_path):
         try:
             baseline_model, baseline_target_layer = build_baseline_model(num_classes)
-            baseline_model = load_checkpoint(baseline_path, baseline_model, device=DEVICE)
             baseline_model.to(DEVICE).eval()
-            print(f"[INFO] Loaded CNN baseline: ResNet-18 ({num_classes} classes)")
         except Exception as e:
             print(f"[WARN] Could not load baseline model: {e}")
             baseline_model = None
@@ -175,6 +188,20 @@ def load_models():
     else:
         print("[INFO] No temperature scaler found. Confidence scores are uncalibrated.")
         print(f"       Run: python calibration/run_calibration.py")
+
+    # Rejection threshold from calibrated confidence (B-8). The 0.30 default was
+    # fit against UNCALIBRATED confidence and over-rejected valid predictions;
+    # calibration/run_calibration.py derives a threshold on calibrated max-prob.
+    global CONFIDENCE_THRESHOLD
+    CFG_PATH = os.path.join(MODELS_DIR, 'calibration_config.json')
+    if os.path.exists(CFG_PATH):
+        import json as _json
+        with open(CFG_PATH) as _f:
+            _cfg = _json.load(_f)
+        CONFIDENCE_THRESHOLD = float(_cfg.get('rejection_threshold', CONFIDENCE_THRESHOLD))
+        print(f"[LOADED] Calibrated rejection threshold = {CONFIDENCE_THRESHOLD:.4f}")
+    else:
+        print(f"[INFO] No calibration_config.json; using default threshold {CONFIDENCE_THRESHOLD}")
 
     # ── Hybrid SVM Pipeline ───────────────────────────────────
     # Tries hybrid_svm.pkl first, falls back to hybrid_svm_pipeline.pkl

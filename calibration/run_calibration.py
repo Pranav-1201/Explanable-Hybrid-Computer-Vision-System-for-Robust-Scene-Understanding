@@ -48,10 +48,16 @@ if __name__ == '__main__':
         print(f"[ERROR] {CHECKPOINT} not found. Train the model first.")
         sys.exit(1)
 
-    # Load model
-    model = CNNBaseline(NUM_CLASSES).to(device)
-    load_checkpoint(CHECKPOINT, model)
+    # Load model — use the backbone and the winning (raw vs EMA) weights that
+    # training selected, so we calibrate exactly what will be served.
+    meta     = torch.load(CHECKPOINT, map_location='cpu', weights_only=True)
+    backbone = meta.get('backbone', 'resnet50_places365_local')
+    load_ema = bool(meta.get('best_is_ema', False))
+    model = CNNBaseline(NUM_CLASSES, backbone=backbone).to(device)
+    load_checkpoint(CHECKPOINT, model, device=device, load_ema=load_ema)
     model.eval()
+    print(f"Loaded {CHECKPOINT}: backbone={backbone} load_ema={load_ema} "
+          f"val_acc={meta.get('val_acc', float('nan')):.2f}%")
 
     # Build val split (same seed as training — CRITICAL for honest calibration)
     full_tmp = MITIndoorDataset(TRAIN_DIR, transform=None)
@@ -89,8 +95,32 @@ if __name__ == '__main__':
         probs_raw, probs_cal, labels, 'ResNet-50 CNN'
     )
 
+    # ── Rejection threshold from CALIBRATED confidence (fixes B-8) ──────────
+    # The app previously hardcoded 0.30 against UNCALIBRATED confidence, which
+    # over-rejected valid predictions on this underconfident model. Derive the
+    # threshold from the calibrated max-prob of correctly-classified val images:
+    # the 5th percentile accepts ~95% of confident-correct predictions while
+    # still flagging genuinely low-confidence / OOD inputs.
+    REJECT_PCTL = 5
+    pred_cal    = probs_cal.argmax(1)
+    conf_cal    = probs_cal.max(1)
+    correct_msk = pred_cal == labels
+    rejection_threshold = float(np.percentile(conf_cal[correct_msk], REJECT_PCTL))
+    print(f"\nRejection threshold (calibrated {REJECT_PCTL}th pctl of correct preds): "
+          f"{rejection_threshold:.4f}")
+    print(f"  vs old hardcoded 0.30 against uncalibrated confidence")
+
     # Save
     scaler.save('models/temperature_cnn.json')
+    with open('models/calibration_config.json', 'w') as f:
+        json.dump({
+            'temperature':         scaler.T,
+            'rejection_threshold': rejection_threshold,
+            'threshold_basis':     f'{REJECT_PCTL}th pctl of calibrated max-prob over correct val preds',
+            'ece_before':          ece_raw_final,
+            'ece_after':           ece_cal_final,
+        }, f, indent=2)
+    print(f"[SAVED] Calibration config -> models/calibration_config.json")
 
     report = {
         'model':      CHECKPOINT,
@@ -104,8 +134,8 @@ if __name__ == '__main__':
     os.makedirs('results', exist_ok=True)
     with open('results/calibration_report.json', 'w') as f:
         json.dump(report, f, indent=2)
-    print(f"\n[SAVED] Calibration report → results/calibration_report.json")
-    print(f"[SAVED] Temperature scalar → models/temperature_cnn.json")
+    print(f"\n[SAVED] Calibration report -> results/calibration_report.json")
+    print(f"[SAVED] Temperature scalar -> models/temperature_cnn.json")
 
     from calibration.plot_reliability import plot_reliability_diagram
     plot_reliability_diagram(

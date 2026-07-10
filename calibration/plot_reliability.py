@@ -58,7 +58,7 @@ def plot_reliability_diagram(
     os.makedirs('results', exist_ok=True)
     plt.savefig(save_path, dpi=150, bbox_inches='tight')
     plt.close()
-    print(f"[SAVED] Reliability diagram → {save_path}")
+    print(f"[SAVED] Reliability diagram -> {save_path}")
     return ece_raw, ece_cal
 
 if __name__ == '__main__':
