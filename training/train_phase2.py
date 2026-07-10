@@ -95,7 +95,13 @@ def train():
 
     try:
         from timm.utils import ModelEmaV2
-        ema_model = ModelEmaV2(model, decay=0.9998, device=device)
+        # decay must be matched to the number of optimizer steps in this run.
+        # steps = ceil(n_train/BATCH_SIZE) * NUM_EPOCHS ~= 76 * 45 = 3420.
+        # decay=0.9998 has an averaging window of 1/(1-d) = 5000 steps > 3420,
+        # so the EMA never escapes its random-init head (observed: Val(EMA) 1.9%
+        # at epoch 1, only 12.3% by epoch 5). decay=0.999 -> ~1000-step window
+        # (~13 epochs), which converges well within this schedule.
+        ema_model = ModelEmaV2(model, decay=0.999, device=device)
         use_ema = True
     except Exception as e:
         print(f"[WARNING] EMA disabled: {e}")
@@ -186,11 +192,16 @@ def train():
         
         current_lr = optimizer.param_groups[-1]['lr']
 
-        target_val_acc = val_acc_ema if use_ema else val_acc_raw
+        # Select on the better of raw/EMA, never blindly on EMA: early in
+        # training the EMA still trails its initialisation and would pick the
+        # checkpoint by noise. Record which weights won so evaluation,
+        # calibration and serving load the same ones.
+        best_is_ema    = use_ema and val_acc_ema > val_acc_raw
+        target_val_acc = max(val_acc_raw, val_acc_ema) if use_ema else val_acc_raw
         improved = ""
         if target_val_acc > best_val_acc:
             best_val_acc = target_val_acc
-            improved = " <- best"
+            improved = f" <- best ({'ema' if best_is_ema else 'raw'})"
             torch.save({
                 'epoch': epoch,
                 'model_state': model.state_dict(),
@@ -198,6 +209,9 @@ def train():
                 'optimizer': optimizer.state_dict(),
                 'scheduler': scheduler.state_dict(),
                 'val_acc': target_val_acc,
+                'val_acc_raw': val_acc_raw,
+                'val_acc_ema': val_acc_ema if use_ema else None,
+                'best_is_ema': best_is_ema,
                 'backbone': BACKBONE,
             }, MODEL_OUT)
 
