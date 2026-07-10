@@ -37,7 +37,7 @@ def extract(split, model, device, save_path):
     emb_arr = np.concatenate(embeddings, axis=0)
     lbl_arr = np.array(labels)
     np.savez(save_path, embeddings=emb_arr, labels=lbl_arr)
-    print(f"[SAVED] {split}: {emb_arr.shape} → {save_path}")
+    print(f"[SAVED] {split}: {emb_arr.shape} -> {save_path}")
     return emb_arr, lbl_arr
 
 if __name__ == '__main__':
