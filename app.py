@@ -107,7 +107,6 @@ def compute_all_features(image_rgb: np.ndarray) -> np.ndarray:
 # ── Global model handles ───────────────────────────────────────
 baseline_model        = None
 baseline_target_layer = None   # Grad-CAM target layer, set to match served arch
-hybrid_pipeline       = None   # sklearn Pipeline (Scaler → PCA → LinearSVC)
 fusion_model          = None
 fusion_cnn            = None
 fusion_pca            = None
@@ -159,7 +158,7 @@ def discover_classes():
 
 
 def load_models():
-    global baseline_model, hybrid_pipeline, classes, baseline_target_layer
+    global baseline_model, classes, baseline_target_layer
     global fusion_model, fusion_cnn, fusion_pca
 
     classes     = discover_classes()
@@ -203,18 +202,11 @@ def load_models():
     else:
         print(f"[INFO] No calibration_config.json; using default threshold {CONFIDENCE_THRESHOLD}")
 
-    # ── Hybrid SVM Pipeline ───────────────────────────────────
-    # Tries hybrid_svm.pkl first, falls back to hybrid_svm_pipeline.pkl
-    for svm_name in ("hybrid_svm.pkl", "hybrid_svm_pipeline.pkl"):
-        svm_path = os.path.join(MODELS_DIR, svm_name)
-        if os.path.exists(svm_path):
-            try:
-                hybrid_pipeline = joblib.load(svm_path)
-                print(f"[INFO] Loaded Hybrid SVM pipeline: {svm_name}")
-                break
-            except Exception as e:
-                print(f"[WARN] Could not load {svm_name}: {e}")
-                hybrid_pipeline = None
+    # ── Hybrid HOG-SVM arm: RETIRED (B-8) ─────────────────────
+    # The HOG->LinearSVC arm scored 10.75% top-1 (67-class, ~7x chance)
+    # and is no longer served. Its invalid softmax-over-decision_function
+    # confidence (audit N9) is deleted rather than patched. Root cause and
+    # the principled replacement are logged in AUDIT_REPORT.md (B-8a).
 
     # ── Fusion Model (Architecture B) ─────────────────────────
     fusion_path = os.path.join(MODELS_DIR, "fusion_best.pth")
@@ -268,17 +260,6 @@ def run_gradcam(model, input_tensor, target_layer, pred_idx, image_float):
     )
 
 
-def decision_to_probs(decision_scores: np.ndarray) -> np.ndarray:
-    """
-    Convert LinearSVC decision_function scores to pseudo-probabilities
-    via softmax. LinearSVC has no predict_proba, so this gives a
-    calibrated confidence for the frontend confidence display.
-    """
-    d = decision_scores - decision_scores.max()   # numerical stability
-    e = np.exp(d)
-    return e / e.sum()
-
-
 # ── Health endpoint ────────────────────────────────────────────
 @app.route("/health", methods=["GET"])
 def health():
@@ -286,7 +267,6 @@ def health():
         "status":          "ok",
         "device":          str(DEVICE),
         "baseline_loaded": baseline_model  is not None,
-        "hybrid_loaded":   hybrid_pipeline is not None,
         "num_classes":     len(classes),
         "classes":         classes,
     })
@@ -305,12 +285,15 @@ def predict():
 
     model_type = request.form.get("model", "baseline")
 
+    # Served arms (B-8): the HOG-SVM arm is retired; fusion is handled below.
+    SERVED_MODELS = {"baseline", "fusion"}
+    if model_type not in SERVED_MODELS:
+        return jsonify({"error": f"Unknown model '{model_type}'. "
+                                 f"Served models: {sorted(SERVED_MODELS)}"}), 400
+
     if model_type == "baseline" and baseline_model is None:
         return jsonify({"error": "Baseline model not loaded. "
                                  "Run: python training/train_baseline.py"}), 503
-    if model_type == "hybrid" and hybrid_pipeline is None:
-        return jsonify({"error": "Hybrid SVM model not loaded. "
-                                 "Run: python training/train_hybrid_svm.py"}), 503
     if model_type == "fusion":
         if fusion_model is None:
             # Graceful fallback to baseline
@@ -373,27 +356,6 @@ def predict():
                 )
             except Exception as e:
                 result["gradcam_error"] = str(e)
-
-        # ── HYBRID SVM path ────────────────────────────────────
-        elif model_type == "hybrid":
-            hog_feat = compute_all_features(image_rgb).reshape(1, -1)
-
-            # decision_function gives one score per class
-            decision = hybrid_pipeline.decision_function(hog_feat)[0]
-            probs    = decision_to_probs(decision)
-
-            pred_idx = int(np.argmax(probs))
-            top5_idx = np.argsort(probs)[::-1][:5]
-
-            result.update({
-                "prediction": classes[pred_idx],
-                "confidence": float(probs[pred_idx]),
-                "top5": [
-                    {"class": classes[i], "prob": float(probs[i])}
-                    for i in top5_idx
-                ],
-                "note": "Hybrid model uses HOG + SVM — Grad-CAM not applicable.",
-            })
 
         # ── FUSION MODEL path ──────────────────────────────────
         elif model_type == "fusion":

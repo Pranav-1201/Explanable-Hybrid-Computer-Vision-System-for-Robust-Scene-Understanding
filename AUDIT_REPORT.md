@@ -117,6 +117,13 @@ Effort: S < ½ day · M = ½–2 days · L > 2 days. Impact on the "portfolio-de
 
 Deliberately **not** doing: backbone upgrade to ConvNeXt/EfficientNet before B-5 proves out the Places365 ResNet-50 (one variable at a time); keeping the HOG-SVM arm alive purely for narrative if B-8 shows it contributes <1–2% in fusion ablation.
 
+### B-8 status (Session 4, 2026-07-12)
+
+- **HOG-SVM arm RETIRED from serving.** Measured 10.75% top-1 (67-class, ~7× chance). Removed the `hybrid` branch, its startup loader, `/health` field, and the dead UI button. The invalid softmax-over-`decision_function` confidence (N9) was **deleted, not patched**.
+- **N8 serve-skew fixed** as a single source of truth for the resize path (see commit 2): serving now extracts HOG from the RAW image via `preprocessing/extract_hog_features.extract_features_from_rgb` (RAW→128), identical to training, instead of the RAW→224→128 duplicate.
+- **HybridFusion disabled from the default `/predict` path** but code + `fusion_best.pth` + B-7 ablation numbers retained for B-10 and the README (honest finding: fusion 82.01% test < CNN-only 83.21%).
+- **B-8a (FUTURE backlog, not built this session):** principled SVM replacement already scaffolded at `training/train_embedding_svm.py` — train a `LinearSVC`/`SVC` on the **CNN embeddings** (not HOG) wrapped in `sklearn.calibration.CalibratedClassifierCV` (Platt/isotonic) to get *real* probabilities instead of softmax-over-decision_function. Only worth doing if a classical-head arm is wanted alongside the CNN; needs its own session (involves training). Logged per user instruction; deliberately not implemented in B-8.
+
 ---
 
 ## 6. Recommended headline framing (Step 4)

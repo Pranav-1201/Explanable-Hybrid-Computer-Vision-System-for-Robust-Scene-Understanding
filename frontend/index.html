@@ -786,10 +786,6 @@
             <span>CNN Baseline</span>
             ResNet-18 + Grad-CAM
           </button>
-          <button class="model-btn" id="btn-hybrid" onclick="selectModel('hybrid')">
-            <span>Hybrid SVM</span>
-            HOG + LinearSVC
-          </button>
         </div>
 
         <button id="analyse-btn" onclick="analyse()" disabled>
@@ -907,7 +903,6 @@
   function selectModel(m) {
     selectedModel = m;
     document.getElementById("btn-baseline").classList.toggle("active", m === "baseline");
-    document.getElementById("btn-hybrid"  ).classList.toggle("active", m === "hybrid");
   }
 
   // ── Analyse button state ───────────────────────────────────
@@ -1087,7 +1082,6 @@
       info.innerHTML = `
         DEVICE &nbsp;&nbsp;&nbsp; ${device}<br>
         BASELINE &nbsp; ${data.baseline_loaded ? '<span style="color:#00ffb3">LOADED</span>' : '<span style="color:#ff4d6d">NOT LOADED</span>'}<br>
-        HYBRID &nbsp;&nbsp;&nbsp; ${data.hybrid_loaded ? '<span style="color:#00ffb3">LOADED</span>' : '<span style="color:#ff4d6d">NOT LOADED</span>'}<br>
         CLASSES &nbsp;&nbsp; ${data.num_classes > 0 ? data.num_classes + ' classes' : '<span style="color:#ff4d6d">NONE FOUND</span>'}<br>
         ENDPOINT &nbsp; ${API}
       `;
