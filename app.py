@@ -17,7 +17,6 @@ sys.path.insert(0, ROOT)
 
 import numpy as np
 import torch
-import joblib
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from PIL import Image
@@ -29,9 +28,7 @@ from pytorch_grad_cam import GradCAM
 from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
 from pytorch_grad_cam.utils.image import show_cam_on_image
 
-from models.cnn_baseline import CNNBaseline
 from data.dataset_loader import get_transforms
-from preprocessing.extract_hog_features import extract_features_from_rgb
 
 app = Flask(__name__)
 CORS(app)
@@ -48,9 +45,6 @@ print(f"[INFO] Using device: {DEVICE}")
 # ── Global model handles ───────────────────────────────────────
 baseline_model        = None
 baseline_target_layer = None   # Grad-CAM target layer, set to match served arch
-fusion_model          = None
-fusion_cnn            = None
-fusion_pca            = None
 classes               = []
 
 
@@ -100,7 +94,6 @@ def discover_classes():
 
 def load_models():
     global baseline_model, classes, baseline_target_layer
-    global fusion_model, fusion_cnn, fusion_pca
 
     classes     = discover_classes()
     num_classes = max(len(classes), 1)
@@ -149,32 +142,15 @@ def load_models():
     # confidence (audit N9) is deleted rather than patched. Root cause and
     # the principled replacement are logged in AUDIT_REPORT.md (B-8a).
 
-    # ── Fusion Model (Architecture B) ─────────────────────────
-    fusion_path = os.path.join(MODELS_DIR, "fusion_best.pth")
-    pca_path = os.path.join(ROOT, "data", "hog_pca_model.pkl")
-    if os.path.exists(fusion_path) and os.path.exists(pca_path):
-        try:
-            fusion_pca = joblib.load(pca_path)  # scaler + pca bundle
-
-            # Load CNN + fusion model from checkpoint
-            from models.hybrid_fusion import HybridFusion
-
-            ckpt = torch.load(fusion_path, map_location=DEVICE)
-            
-            fusion_cnn = CNNBaseline(num_classes)
-            fusion_cnn.load_state_dict(ckpt['cnn_state'])
-            fusion_cnn.to(DEVICE).eval()
-            
-            fusion_model = HybridFusion(cnn_dim=2048, hog_dim=512, num_classes=num_classes)
-            fusion_model.load_state_dict(ckpt['fusion_state'])
-            fusion_model.to(DEVICE).eval()
-            
-            print("[LOADED] Hybrid Fusion model (Architecture B)")
-        except Exception as e:
-            print(f"[WARNING] Could not load fusion model: {e}")
-            fusion_model = None
-            fusion_cnn = None
-            fusion_pca = None
+    # ── Fusion Model (Architecture B): DISABLED from serving (B-8) ─────────
+    # HybridFusion (CNN 2048 + HOG-PCA 512) is a real jointly-trained model, but
+    # the B-7 ablation showed it does NOT beat CNN-only: fusion 82.01% test vs
+    # CNN-only 83.21% (-1.2%). It is intentionally NOT loaded or served -- the
+    # app serves the honest best model (CNN-only). The code and checkpoint are
+    # retained as a documented research finding for the B-10 ablation and README:
+    #   model:      models/hybrid_fusion.py  (HybridFusion, ablate_hog())
+    #   training:   training/train_fusion.py (two-stage; prints test top-1)
+    #   checkpoint: models/fusion_best.pth
 
 
 load_models()
@@ -226,23 +202,18 @@ def predict():
 
     model_type = request.form.get("model", "baseline")
 
-    # Served arms (B-8): the HOG-SVM arm is retired; fusion is handled below.
-    SERVED_MODELS = {"baseline", "fusion"}
+    # Served arms (B-8): CNN-only. The HOG-SVM arm is retired and the fusion
+    # arm is disabled from serving (research finding, -1.2% vs CNN-only).
+    SERVED_MODELS = {"baseline"}
     if model_type not in SERVED_MODELS:
         return jsonify({"error": f"Unknown model '{model_type}'. "
-                                 f"Served models: {sorted(SERVED_MODELS)}"}), 400
+                                 f"Served models: {sorted(SERVED_MODELS)}. "
+                                 f"Fusion is a disabled research arm "
+                                 f"(see README ablation)."}), 400
 
     if model_type == "baseline" and baseline_model is None:
         return jsonify({"error": "Baseline model not loaded. "
                                  "Run: python training/train_baseline.py"}), 503
-    if model_type == "fusion":
-        if fusion_model is None:
-            # Graceful fallback to baseline
-            if baseline_model is not None:
-                print("[WARN] Fusion model not loaded, falling back to baseline")
-                model_type = "baseline"
-            else:
-                return jsonify({"error": "Fusion model and baseline model not loaded."}), 503
     if not classes:
         return jsonify({"error": "No classes found. "
                                  "Check data/MIT_Indoor/train exists."}), 503
@@ -297,42 +268,6 @@ def predict():
                 )
             except Exception as e:
                 result["gradcam_error"] = str(e)
-
-        # ── FUSION MODEL path ──────────────────────────────────
-        elif model_type == "fusion":
-            # 1. HOG features -> PCA. Extract from the RAW image via the shared
-            #    single-source-of-truth extractor (RAW->128), matching training
-            #    exactly and avoiding the old RAW->224->128 serve skew (N8).
-            raw_rgb  = np.array(pil_img.convert("RGB"))
-            hog_feat = extract_features_from_rgb(raw_rgb).reshape(1, -1)
-            scaler = fusion_pca['scaler']
-            pca = fusion_pca['pca']
-            hog_scaled = scaler.transform(hog_feat)
-            hog_pca = pca.transform(hog_scaled)
-            hog_tensor = torch.from_numpy(hog_pca).float().to(DEVICE)
-            
-            # 2. CNN embedding
-            transform = get_transforms(train=False)
-            input_tensor = transform(pil_img.convert("RGB").resize((224, 224)))
-            input_tensor = input_tensor.unsqueeze(0).float().to(DEVICE)
-            
-            with torch.no_grad():
-                cnn_emb = fusion_cnn.get_embedding(input_tensor)
-                logits = fusion_model(cnn_emb, hog_tensor)
-                probs = torch.softmax(logits, dim=1)[0].cpu().numpy()
-                
-            pred_idx = int(np.argmax(probs))
-            top5_idx = np.argsort(probs)[::-1][:5]
-            
-            result.update({
-                "prediction": classes[pred_idx],
-                "confidence": float(probs[pred_idx]),
-                "top5": [
-                    {"class": classes[i], "prob": float(probs[i])}
-                    for i in top5_idx
-                ],
-                "note": "Fusion model prediction.",
-            })
 
         # ── Confidence-based rejection ──────────────────────
         if result.get("confidence", 1.0) < CONFIDENCE_THRESHOLD:
