@@ -15,7 +15,6 @@ warnings.filterwarnings("ignore")
 ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, ROOT)
 
-import cv2
 import numpy as np
 import torch
 import joblib
@@ -30,10 +29,9 @@ from pytorch_grad_cam import GradCAM
 from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
 from pytorch_grad_cam.utils.image import show_cam_on_image
 
-from skimage.feature import hog as sk_hog, local_binary_pattern
-
 from models.cnn_baseline import CNNBaseline
 from data.dataset_loader import get_transforms
+from preprocessing.extract_hog_features import extract_features_from_rgb
 
 app = Flask(__name__)
 CORS(app)
@@ -41,67 +39,10 @@ CORS(app)
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"[INFO] Using device: {DEVICE}")
 
-# ── HOG config — MUST match preprocessing/extract_hog_features.py ─
-IMG_SIZE     = (128, 128)
-ORIENTATIONS = 9
-PPC          = (8, 8)
-CPB          = (2, 2)
-LBP_RADIUS   = 3
-LBP_N_POINTS = 8 * LBP_RADIUS   # = 24
-COLOR_BINS   = 16
-
-
-def _hog_of(gray_img):
-    return sk_hog(
-        gray_img,
-        orientations=ORIENTATIONS,
-        pixels_per_cell=PPC,
-        cells_per_block=CPB,
-        block_norm="L2-Hys"
-    )
-
-
-def compute_all_features(image_rgb: np.ndarray) -> np.ndarray:
-    """Mirrors extract_hog_features.py exactly."""
-    img  = cv2.resize(image_rgb, IMG_SIZE)
-    bgr  = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-    gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY).astype(np.float32) / 255.0
-
-    # 1. HOG spatial pyramid (full image + 2×2 grid)
-    hog_parts = [_hog_of(gray)]
-    h, w = gray.shape
-    for r in range(2):
-        for c in range(2):
-            patch = gray[r*h//2:(r+1)*h//2, c*w//2:(c+1)*w//2]
-            patch = cv2.resize(patch, (64, 64))
-            hog_parts.append(_hog_of(patch))
-    hog_feat = np.concatenate(hog_parts)
-
-    # 2. Color histogram — HSV, 16 bins per channel → 48-d
-    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
-    color_hist = []
-    for i, rng in enumerate([(0, 180), (0, 256), (0, 256)]):
-        h_hist = cv2.calcHist([hsv], [i], None, [COLOR_BINS], list(rng))
-        h_hist = h_hist.flatten().astype(np.float32)
-        color_hist.append(h_hist / (h_hist.sum() + 1e-6))
-    color_feat = np.concatenate(color_hist)
-
-    # 3. Color moments — mean+std per BGR channel → 6-d
-    moments = []
-    for ch in range(3):
-        c = bgr[:, :, ch].astype(np.float32) / 255.0
-        moments += [c.mean(), c.std()]
-    moments_feat = np.array(moments, dtype=np.float32)
-
-    # 4. LBP texture → 26-d
-    gray_uint8 = (gray * 255).astype(np.uint8)
-    lbp = local_binary_pattern(gray_uint8, P=LBP_N_POINTS, R=LBP_RADIUS, method="uniform")
-    n_bins = LBP_N_POINTS + 2
-    lbp_hist, _ = np.histogram(lbp.ravel(), bins=n_bins,
-                                range=(0, n_bins), density=True)
-    lbp_feat = lbp_hist.astype(np.float32)
-
-    return np.concatenate([hog_feat, color_feat, moments_feat, lbp_feat])
+# Classical HOG/colour/LBP features come from the single source of truth in
+# preprocessing/extract_hog_features.extract_features_from_rgb (imported above).
+# Serving must NOT duplicate the resize/feature logic — the old duplicate here
+# resized RAW->224->128 and drifted from training's RAW->128 (audit N8).
 
 
 # ── Global model handles ───────────────────────────────────────
@@ -359,8 +300,11 @@ def predict():
 
         # ── FUSION MODEL path ──────────────────────────────────
         elif model_type == "fusion":
-            # 1. HOG features -> PCA
-            hog_feat = compute_all_features(image_rgb).reshape(1, -1)
+            # 1. HOG features -> PCA. Extract from the RAW image via the shared
+            #    single-source-of-truth extractor (RAW->128), matching training
+            #    exactly and avoiding the old RAW->224->128 serve skew (N8).
+            raw_rgb  = np.array(pil_img.convert("RGB"))
+            hog_feat = extract_features_from_rgb(raw_rgb).reshape(1, -1)
             scaler = fusion_pca['scaler']
             pca = fusion_pca['pca']
             hog_scaled = scaler.transform(hog_feat)

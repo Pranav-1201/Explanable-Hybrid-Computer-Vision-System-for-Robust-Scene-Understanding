@@ -147,20 +147,20 @@ def lbp_histogram(gray_img):
 # ============================================================
 # MASTER FEATURE EXTRACTOR
 # ============================================================
-def compute_features(sample):
+def extract_features_from_rgb(image_rgb) -> np.ndarray:
     """
-    Extract ALL features from one (image, label) sample.
-    Returns: (feature_vector, label)
+    SINGLE SOURCE OF TRUTH for classical (HOG + colour + LBP) features.
 
-    Expected total dims:
-      - HOG pyramid:     ~3564  (full + 4 patches)
-      - Color histogram: 48
-      - Color moments:   6
-      - LBP:             26
-      --------------------------------
-      Total:             ~3644
+    Accepts a RAW RGB image (PIL or ndarray, any resolution) and resizes it
+    RAW -> IMG_SIZE exactly once, here. Both offline extraction and online
+    serving must call this so their features are byte-identical. The prior
+    serving path resized RAW -> 224 (LANCZOS) -> 128, introducing a
+    train/serve skew of up to 0.239 per feature (audit N8); routing serving
+    through this function eliminates that skew by construction.
+
+    Returns: float32 feature vector (~3644-d).
     """
-    image, label = sample
+    image = image_rgb
 
     # Ensure numpy RGB
     if not isinstance(image, np.ndarray):
@@ -172,7 +172,7 @@ def compute_features(sample):
     elif image.shape[2] == 4:
         image = image[:, :, :3]
 
-    # Resize
+    # Resize RAW -> IMG_SIZE (the one and only resize for classical features)
     image_resized = cv2.resize(image, IMG_SIZE)
 
     # BGR for OpenCV color ops
@@ -188,7 +188,25 @@ def compute_features(sample):
     lbp_feat   = lbp_histogram(gray)
 
     feature_vec = np.concatenate([hog_feat, color_hist, c_moments, lbp_feat])
-    return feature_vec.astype(np.float32), label
+    return feature_vec.astype(np.float32)
+
+
+def compute_features(sample):
+    """
+    Extract ALL features from one (image, label) sample.
+    Returns: (feature_vector, label)
+
+    Thin wrapper over extract_features_from_rgb (the single source of truth).
+    Expected total dims:
+      - HOG pyramid:     ~3564  (full + 4 patches)
+      - Color histogram: 48
+      - Color moments:   6
+      - LBP:             26
+      --------------------------------
+      Total:             ~3644
+    """
+    image, label = sample
+    return extract_features_from_rgb(image), label
 
 
 # ============================================================
