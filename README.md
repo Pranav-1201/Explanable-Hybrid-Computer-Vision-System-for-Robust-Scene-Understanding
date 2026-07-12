@@ -128,22 +128,3 @@ All experiments are fully reproducible using the provided scripts.
 👤 Author
 
 Pranav Upadhyay
-
-
-
----
-
-
-## STEP 3: Save the file
-Save `README.md`.
-
-
----
-
-
-## STEP 4: Check Git status
-Back in your terminal:
-
-
-```bash
-git status
