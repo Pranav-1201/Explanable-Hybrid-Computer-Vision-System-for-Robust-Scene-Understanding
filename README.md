@@ -18,6 +18,27 @@ The **served** model is CNN-only — a **ResNet-50 (Places365) fine-tune**, the 
 
 Confidence is temperature-scaled (T = 0.5142; ECE 33.37% → 5.57%) with a calibrated out-of-scope rejection threshold.
 
+### Ablation (B-10)
+
+Full table in [`reports/ablation_table.md`](reports/ablation_table.md), regenerate with `python evaluation/ablation_study.py`. Test set, n = 1,340, inference only — nothing was retrained.
+
+| Configuration | Test top-1 | Test top-5 |
+|---|---|---|
+| ResNet-50 Places365, raw weights | 77.91% | 94.33% |
+| **ResNet-50 Places365, EMA — served** | **83.21%** | **97.76%** |
+| ResNet-50 Places365, EMA + TTA | 83.88% | 97.84% |
+| Fusion (CNN + HOG), full | 82.01% | 96.49% |
+| Fusion, HOG branch zeroed | 80.45% | 96.49% |
+| ResNet-18 ImageNet (context only) | 70.82% | 91.57% |
+
+Three things this actually shows:
+
+1. **EMA is the single biggest win: +5.30 pts** (77.91 → 83.21) — and this is the component that was silently broken until the EMA decay bug was found and fixed.
+2. **HOG is not worthless; the fusion architecture is.** Zeroing the HOG branch costs the fusion head **1.56 pts** (82.01 → 80.45), so the head genuinely uses HOG. Yet full fusion still lands **1.2 pts below plain CNN-only**. HOG adds real signal — the fusion wrapper just costs more than that signal is worth. Both halves of that are reported, not only the flattering one.
+3. **TTA is a free +0.67 pts that is not currently served** (83.21 → 83.88): it sits behind a `?tta=1` query param the frontend never sends. Logged as backlog rather than quietly enabled.
+
+Two caveats that change how the table reads: the HOG row is a **test-time** ablation on a head that *was trained with* HOG, not a retrained no-HOG control. The ResNet-18 row is **context, not a controlled ablation** — it differs in architecture *and* recipe, so it does not isolate Places365-vs-ImageNet pretraining.
+
 ---
 
 ## 🔍 Key Features
