@@ -47,3 +47,19 @@ data/hog_pca_model.pkl
 
 # Stray npm artifacts (no package.json in this repo)
 package-lock.json
+
+# --- Shell-redirection artifacts from the cmd.exe hook wiring -----------------
+# Hooks run as `cmd /c ...` and the hook payload JSON is piped in on stdin;
+# cmd consumes the leftover stdin and parses it as a command line, so any '>'
+# inside that JSON (prompt text, memory content, commit-message text) acts as a
+# redirection operator and drops a 0-byte file in the repo root named after the
+# next token: "RAW->128" -> 128, "ECE 5.57% > 5%" -> 5%, "-> np.ndarray", etc.
+# Harmless but noisy. Ignored so they can never be committed by accident.
+# Real fix belongs in the hook config (give the hook a NUL stdin, or invoke node
+# directly instead of through `cmd /c`); this is only a safety net.
+# No legitimate root-level file in this repo starts with a digit or ends in '%'.
+/[0-9]*
+/*%
+/IMG_SIZE
+/np.ndarray
+/proves
