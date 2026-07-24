@@ -335,9 +335,12 @@ def predict():
             input_tensor = input_tensor.unsqueeze(0).float().to(DEVICE)
 
             from inference.tta import tta_predict, single_predict
-            tta_param = request.args.get("tta", "0")
-            
-            if tta_param == "1":
+            # TTA is the served default: measured +0.67 top-1 (83.21 -> 83.88,
+            # B-10 ablation) for +~22 ms/image (7 forward passes vs 1), which is
+            # imperceptible in the demo. Opt out per-request with tta=0.
+            tta_param = request.values.get("tta", "1")
+
+            if tta_param != "0":
                 try:
                     probs = tta_predict(baseline_model, pil_img.convert("RGB"), DEVICE, scaler=temperature_scaler).numpy()
                     result["tta_used"] = True

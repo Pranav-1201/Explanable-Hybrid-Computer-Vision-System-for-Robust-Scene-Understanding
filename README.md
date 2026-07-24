@@ -10,7 +10,7 @@ The **served** model is CNN-only — a **ResNet-50 (Places365) fine-tune**, the 
 
 | Arm | What it is | Test top-1 | Status |
 |---|---|---|---|
-| **CNN (served)** | ResNet-50 Places365, EMA weights, temperature-calibrated | **83.21%** (top-5 97.76%) | **Served** |
+| **CNN (served)** | ResNet-50 Places365, EMA weights, temperature-calibrated, TTA default | **83.88%** (83.21% single-crop; top-5 97.84%) | **Served** |
 | Fusion (Architecture B) | HybridFusion: CNN 2048 + HOG-PCA 512, jointly fine-tuned | 82.01% | Disabled research finding |
 | HOG-SVM | HOG spatial pyramid → LinearSVC | 10.75% | Retired |
 
@@ -25,8 +25,8 @@ Full table in [`reports/ablation_table.md`](reports/ablation_table.md), regenera
 | Configuration | Test top-1 | Test top-5 |
 |---|---|---|
 | ResNet-50 Places365, raw weights | 77.91% | 94.33% |
-| **ResNet-50 Places365, EMA — served** | **83.21%** | **97.76%** |
-| ResNet-50 Places365, EMA + TTA | 83.88% | 97.84% |
+| ResNet-50 Places365, EMA | 83.21% | 97.76% |
+| **ResNet-50 Places365, EMA + TTA — served** | **83.88%** | **97.84%** |
 | Fusion (CNN + HOG), full | 82.01% | 96.49% |
 | Fusion, HOG branch zeroed | 80.45% | 96.49% |
 | ResNet-18 ImageNet (context only) | 70.82% | 91.57% |
@@ -35,7 +35,7 @@ Three things this actually shows:
 
 1. **EMA is the single biggest win: +5.30 pts** (77.91 → 83.21) — and this is the component that was silently broken until the EMA decay bug was found and fixed.
 2. **HOG is not worthless; the fusion architecture is.** Zeroing the HOG branch costs the fusion head **1.56 pts** (82.01 → 80.45), so the head genuinely uses HOG. Yet full fusion still lands **1.2 pts below plain CNN-only**. HOG adds real signal — the fusion wrapper just costs more than that signal is worth. Both halves of that are reported, not only the flattering one.
-3. **TTA is a free +0.67 pts that is not currently served** (83.21 → 83.88): it sits behind a `?tta=1` query param the frontend never sends. Logged as backlog rather than quietly enabled.
+3. **TTA is now the served default: +0.67 pts** (83.21 → 83.88), which is why the served row above is the EMA + TTA line. It costs a measured +22 ms/image (7 forward passes vs 1 — imperceptible in the demo), and is opt-out per request with `tta=0`.
 
 Two caveats that change how the table reads: the HOG row is a **test-time** ablation on a head that *was trained with* HOG, not a retrained no-HOG control. The ResNet-18 row is **context, not a controlled ablation** — it differs in architecture *and* recipe, so it does not isolate Places365-vs-ImageNet pretraining.
 
