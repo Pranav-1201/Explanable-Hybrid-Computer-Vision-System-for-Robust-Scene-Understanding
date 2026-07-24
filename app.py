@@ -8,7 +8,8 @@ import sys
 import io
 import base64
 import warnings
-import traceback
+import logging
+import uuid
 
 warnings.filterwarnings("ignore")
 
@@ -32,6 +33,15 @@ from data.dataset_loader import get_transforms
 
 app = Flask(__name__)
 CORS(app)
+
+# Unhandled-error tracebacks are logged, never returned to the client (N14).
+# Configure a sink so app.logger.exception() is actually recorded rather than
+# dropped - the point of hiding the trace from the caller is that an operator
+# can still find it here.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+)
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"[INFO] Using device: {DEVICE}")
@@ -375,7 +385,16 @@ def predict():
         return jsonify(result)
 
     except Exception:
-        return jsonify({"error": traceback.format_exc()}), 500
+        # audit N14: never hand a traceback to the client - it leaks absolute
+        # paths, source structure and dependency versions. Log the full trace
+        # server-side against a correlation id and return only that id, so an
+        # operator can still tie a user report back to the exact failure.
+        error_id = uuid.uuid4().hex[:12]
+        app.logger.exception("Unhandled error in /predict (error_id=%s)", error_id)
+        return jsonify({
+            "error": "Internal error while processing the image.",
+            "error_id": error_id,
+        }), 500
 
 
 if __name__ == "__main__":
