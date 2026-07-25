@@ -145,11 +145,32 @@
   .stat.tagged b { color: var(--confident); }
   .summary .head-spacer { min-width: 20px; }
   .reset {
-    margin-left: auto; font-family: var(--mono); font-size: 12.5px;
+    font-family: var(--mono); font-size: 12.5px;
     background: none; border: 1px solid var(--hairline); color: var(--ink-soft);
     padding: 7px 13px; border-radius: 7px; cursor: pointer;
   }
   .reset:hover { color: var(--accent); border-color: var(--accent); }
+
+  /* ── Filter (All | Needs review) ────────────────────────── */
+  .filterbar {
+    margin-left: auto; display: inline-flex;
+    border: 1px solid var(--hairline); border-radius: 8px; overflow: hidden;
+  }
+  .fbtn {
+    font: inherit; font-family: var(--mono); font-size: 12.5px;
+    padding: 7px 13px; background: var(--surface); color: var(--ink-soft);
+    border: none; border-left: 1px solid var(--hairline); cursor: pointer;
+  }
+  .fbtn:first-child { border-left: none; }
+  .fbtn:hover { color: var(--accent); }
+  .fbtn[aria-pressed="true"] {
+    background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+    color: var(--accent); font-weight: 600;
+  }
+  .empty-note {
+    font-family: var(--mono); font-size: 13px; color: var(--ink-soft);
+    text-align: center; padding: 40px 0;
+  }
 
   /* ── Results grid ───────────────────────────────────────── */
   .grid {
@@ -269,9 +290,14 @@
         <div class="stat"><b id="s-total">0</b><span>photos</span></div>
         <div class="stat tagged"><b id="s-tagged">0</b><span>tagged</span></div>
         <div class="stat review"><b id="s-review">0</b><span>need review</span></div>
+        <div class="filterbar" id="filterbar" role="group" aria-label="Filter photos">
+          <button class="fbtn" id="f-all" type="button" aria-pressed="true">All</button>
+          <button class="fbtn" id="f-review" type="button" aria-pressed="false">Needs review</button>
+        </div>
         <button class="reset" id="reset">Start over</button>
       </div>
       <div class="grid" id="grid"></div>
+      <p class="empty-note hidden" id="empty-note">Nothing in the review queue — every photo was tagged confidently.</p>
     </section>
   </main>
 
@@ -322,7 +348,18 @@
 (function () {
   "use strict";
   const $ = (id) => document.getElementById(id);
-  const files = [];   // File objects, index-aligned with rendered cards
+  const files = [];            // File objects, index-aligned with results
+  const urlCache = new Map();  // fileIdx -> objectURL (created once, revoked on reset)
+  const state = {
+    rows: [],        // { it, fileIdx } for every result in the current batch
+    filter: "all",   // "all" | "review"
+    threshold: null,
+  };
+
+  function urlFor(fileIdx) {
+    if (!urlCache.has(fileIdx)) urlCache.set(fileIdx, URL.createObjectURL(files[fileIdx]));
+    return urlCache.get(fileIdx);
+  }
 
   // ── model status ────────────────────────────────────────
   fetch("/health").then(r => r.json()).then(h => {
@@ -345,13 +382,26 @@
   dz.addEventListener("drop", (e) => handleFiles(e.dataTransfer.files));
   input.addEventListener("change", () => handleFiles(input.files));
   $("reset").addEventListener("click", reset);
+  $("f-all").addEventListener("click", () => setFilter("all"));
+  $("f-review").addEventListener("click", () => setFilter("review"));
 
   function reset() {
     files.length = 0;
+    state.rows = [];
+    urlCache.forEach((u) => URL.revokeObjectURL(u));
+    urlCache.clear();
+    setFilter("all");
     $("grid").innerHTML = "";
     $("results").classList.add("hidden");
     $("empty").classList.remove("hidden");
     input.value = "";
+  }
+
+  function setFilter(mode) {
+    state.filter = mode;
+    $("f-all").setAttribute("aria-pressed", String(mode === "all"));
+    $("f-review").setAttribute("aria-pressed", String(mode === "review"));
+    paint();
   }
 
   function handleFiles(list) {
@@ -372,50 +422,61 @@
   // ── render results ──────────────────────────────────────
   function render(data) {
     if (!data || !data.results) return;
+    state.threshold = data.threshold;
     $("s-total").textContent = data.summary.n;
     $("s-tagged").textContent = data.summary.tagged;
     $("s-review").textContent = data.summary.review;
+
+    const startIdx = files.length - data.results.length;
+    state.rows = data.results.map((it, i) => ({ it, fileIdx: startIdx + i }));
+    setFilter("all");   // resets the toggle and paints
+  }
+
+  function paint() {
     const grid = $("grid");
     grid.innerHTML = "";
-    const startIdx = files.length - data.results.length;
+    const rows = state.filter === "review"
+      ? state.rows.filter((r) => r.it.review)
+      : state.rows;
+    $("empty-note").classList.toggle("hidden", rows.length !== 0);
+    rows.forEach((r) => grid.appendChild(cardEl(r.it, r.fileIdx)));
+  }
 
-    data.results.forEach((it, i) => {
-      const fileIdx = startIdx + i;
-      const card = document.createElement(it.error ? "div" : "button");
-      card.className = "card" + (it.error ? " err" : "");
+  function cardEl(it, fileIdx) {
+    const card = document.createElement(it.error ? "div" : "button");
+    card.className = "card" + (it.error ? " err" : "");
+    if (!it.error) card.type = "button";
 
-      if (it.error) {
-        card.innerHTML = `
-          <div class="thumb">unreadable</div>
-          <div class="card-body">
-            <div class="tag-row"><span class="tag">${esc(it.filename)}</span>
-              <span class="badge err">Invalid</span></div>
-            <div class="meta"><span>${esc(it.error)}</span></div>
-          </div>`;
-        grid.appendChild(card);
-        return;
-      }
-
-      const conf = Math.round(it.confidence * 100);
-      const barColor = it.review ? "var(--review)" : "var(--confident)";
-      const reasonTxt = it.review_reason === "out_of_scope" ? "out of scope"
-                      : it.review_reason === "low_confidence" ? "low confidence" : "";
+    if (it.error) {
       card.innerHTML = `
-        <img class="thumb" alt="${esc(it.label)} photo" src="${URL.createObjectURL(files[fileIdx])}" />
+        <div class="thumb">unreadable</div>
         <div class="card-body">
-          <div class="tag-row">
-            <span class="tag">${esc(it.label)}</span>
-            <span class="badge ${it.review ? "review" : "ok"}">${it.review ? "Review" : "Tagged"}</span>
-          </div>
-          <div class="meter"><i style="width:${conf}%;background:${barColor}"></i></div>
-          <div class="meta">
-            <span class="fname">${esc(it.filename)}</span>
-            <span class="conf">${conf}%${reasonTxt ? ` · <span class="reason">${reasonTxt}</span>` : ""}</span>
-          </div>
+          <div class="tag-row"><span class="tag">${esc(it.filename)}</span>
+            <span class="badge err">Invalid</span></div>
+          <div class="meta"><span>${esc(it.error)}</span></div>
         </div>`;
-      card.addEventListener("click", () => openDetail(it, fileIdx));
-      grid.appendChild(card);
-    });
+      return card;
+    }
+
+    const conf = Math.round(it.confidence * 100);
+    const barColor = it.review ? "var(--review)" : "var(--confident)";
+    const reasonTxt = it.review_reason === "out_of_scope" ? "out of scope"
+                    : it.review_reason === "low_confidence" ? "low confidence" : "";
+    card.innerHTML = `
+      <img class="thumb" alt="${esc(it.label)} photo" src="${urlFor(fileIdx)}" />
+      <div class="card-body">
+        <div class="tag-row">
+          <span class="tag">${esc(it.label)}</span>
+          <span class="badge ${it.review ? "review" : "ok"}">${it.review ? "Review" : "Tagged"}</span>
+        </div>
+        <div class="meter"><i style="width:${conf}%;background:${barColor}"></i></div>
+        <div class="meta">
+          <span class="fname">${esc(it.filename)}</span>
+          <span class="conf">${conf}%${reasonTxt ? ` · <span class="reason">${reasonTxt}</span>` : ""}</span>
+        </div>
+      </div>`;
+    card.addEventListener("click", () => openDetail(it, fileIdx));
+    return card;
   }
 
   // ── detail + grad-cam on demand ─────────────────────────
@@ -425,7 +486,7 @@
 
   function openDetail(it, fileIdx) {
     $("d-title").textContent = it.label + (it.review ? "  ·  needs review" : "");
-    $("d-img").src = URL.createObjectURL(files[fileIdx]);
+    $("d-img").src = urlFor(fileIdx);
     $("cam-wrap").classList.add("hidden");
     const ul = $("top5"); ul.innerHTML = "";
     it.top5.forEach(t => {
