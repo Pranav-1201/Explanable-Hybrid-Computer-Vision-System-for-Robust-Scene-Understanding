@@ -250,6 +250,11 @@
   .about-body .k { font-family: var(--mono); color: var(--accent); }
 
   .hidden { display: none !important; }
+  .visually-hidden {
+    position: absolute !important; width: 1px; height: 1px;
+    padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0);
+    white-space: nowrap; border: 0;
+  }
 
   @media (max-width: 640px) {
     .d-body { grid-template-columns: 1fr; }
@@ -268,7 +273,7 @@
       <div class="head-row">
         <div class="wordmark"><span class="mark" aria-hidden="true"></span> Interior Scene Tagger</div>
         <div class="head-spacer"></div>
-        <span class="status" id="status"><span class="dot" id="dot"></span><span id="status-text">Checking model…</span></span>
+        <span class="status" id="status" aria-live="polite"><span class="dot" id="dot"></span><span id="status-text">Checking model…</span></span>
         <button class="btn-link" id="about-open">About &amp; limits</button>
       </div>
       <p class="tagline">
@@ -279,6 +284,7 @@
   </header>
 
   <main class="wrap">
+    <div id="live" class="visually-hidden" aria-live="polite"></div>
     <!-- Empty state -->
     <section id="empty">
       <div class="dropzone" id="dropzone" role="button" tabindex="0" aria-label="Add property photos">
@@ -303,13 +309,13 @@
         <button class="csvbtn" id="export" type="button">Export CSV</button>
         <button class="reset" id="reset">Start over</button>
       </div>
-      <div class="grid" id="grid"></div>
+      <div class="grid" id="grid" aria-label="Tagged photos"></div>
       <p class="empty-note hidden" id="empty-note">Nothing in the review queue — every photo was tagged confidently.</p>
     </section>
   </main>
 
   <!-- Detail dialog -->
-  <dialog id="detail">
+  <dialog id="detail" aria-labelledby="d-title">
     <div class="d-head">
       <span class="d-title" id="d-title">Room</span>
       <button class="d-close" id="d-close" aria-label="Close">&times;</button>
@@ -331,9 +337,9 @@
   </dialog>
 
   <!-- About dialog -->
-  <dialog id="about">
+  <dialog id="about" aria-labelledby="about-title">
     <div class="d-head">
-      <span class="d-title">About &amp; limitations</span>
+      <span class="d-title" id="about-title">About &amp; limitations</span>
       <button class="d-close" id="about-close" aria-label="Close">&times;</button>
     </div>
     <div class="about-body">
@@ -389,9 +395,26 @@
   dz.addEventListener("drop", (e) => handleFiles(e.dataTransfer.files));
   input.addEventListener("change", () => handleFiles(input.files));
   $("reset").addEventListener("click", reset);
-  $("f-all").addEventListener("click", () => setFilter("all"));
-  $("f-review").addEventListener("click", () => setFilter("review"));
+  $("f-all").addEventListener("click", () => { setFilter("all"); announceFilter(); });
+  $("f-review").addEventListener("click", () => { setFilter("review"); announceFilter(); });
   $("export").addEventListener("click", exportCsv);
+
+  // Screen-reader announcements. Clear then set after a tick so repeated
+  // messages are re-announced instead of being deduplicated by the AT.
+  // (setTimeout rather than rAF so it fires even when the tab isn't compositing.)
+  function announce(msg) {
+    const live = $("live");
+    live.textContent = "";
+    setTimeout(() => { live.textContent = msg; }, 40);
+  }
+  function announceFilter() {
+    const shown = state.filter === "review"
+      ? state.rows.filter((r) => r.it.review).length
+      : state.rows.length;
+    announce(state.filter === "review"
+      ? `Showing ${shown} photo${shown === 1 ? "" : "s"} needing review.`
+      : `Showing all ${shown} photo${shown === 1 ? "" : "s"}.`);
+  }
 
   function reset() {
     files.length = 0;
@@ -450,7 +473,9 @@
     picked.forEach(f => { files.push(f); form.append("images", f); });
     $("empty").classList.add("hidden");
     $("results").classList.remove("hidden");
-    $("grid").innerHTML = `<div class="dz-note" style="grid-column:1/-1">Tagging ${picked.length} photo(s)…</div>`;
+    const grid = $("grid");
+    grid.setAttribute("aria-busy", "true");
+    grid.innerHTML = `<div class="dz-note" style="grid-column:1/-1">Tagging ${picked.length} photo(s)…</div>`;
 
     fetch("/predict_batch", { method: "POST", body: form })
       .then(r => r.json())
@@ -468,11 +493,14 @@
 
     const startIdx = files.length - data.results.length;
     state.rows = data.results.map((it, i) => ({ it, fileIdx: startIdx + i }));
+    announce(`Tagged ${data.summary.n} photo${data.summary.n === 1 ? "" : "s"}: `
+           + `${data.summary.tagged} in scope, ${data.summary.review} need review.`);
     setFilter("all");   // resets the toggle and paints
   }
 
   function paint() {
     const grid = $("grid");
+    grid.removeAttribute("aria-busy");
     grid.innerHTML = "";
     const rows = state.filter === "review"
       ? state.rows.filter((r) => r.it.review)
@@ -508,12 +536,15 @@
           <span class="tag">${esc(it.label)}</span>
           <span class="badge ${it.review ? "review" : "ok"}">${it.review ? "Review" : "Tagged"}</span>
         </div>
-        <div class="meter"><i style="width:${conf}%;background:${barColor}"></i></div>
+        <div class="meter" aria-hidden="true"><i style="width:${conf}%;background:${barColor}"></i></div>
         <div class="meta">
           <span class="fname">${esc(it.filename)}</span>
           <span class="conf">${conf}%${reasonTxt ? ` · <span class="reason">${reasonTxt}</span>` : ""}</span>
         </div>
       </div>`;
+    card.setAttribute("aria-label",
+      `${it.label} — ${it.review ? "needs review" : "tagged"}, ${conf}% confidence`
+      + `${reasonTxt ? ", " + reasonTxt : ""}, ${it.filename}. Open details.`);
     card.addEventListener("click", () => openDetail(it, fileIdx));
     return card;
   }
@@ -532,7 +563,7 @@
       const li = document.createElement("li");
       const pct = Math.round(t.prob * 100);
       li.innerHTML = `<span>${esc(t.label)}</span><span class="p">${pct}%</span>
-                      <span class="b" style="width:${Math.max(pct,2)}%"></span>`;
+                      <span class="b" aria-hidden="true" style="width:${Math.max(pct,2)}%"></span>`;
       ul.appendChild(li);
     });
     const btn = $("explain");
