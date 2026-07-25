@@ -171,6 +171,12 @@
     font-family: var(--mono); font-size: 13px; color: var(--ink-soft);
     text-align: center; padding: 40px 0;
   }
+  .csvbtn {
+    font-family: var(--mono); font-size: 12.5px;
+    background: none; border: 1px solid var(--accent); color: var(--accent);
+    padding: 7px 13px; border-radius: 7px; cursor: pointer;
+  }
+  .csvbtn:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
 
   /* ── Results grid ───────────────────────────────────────── */
   .grid {
@@ -294,6 +300,7 @@
           <button class="fbtn" id="f-all" type="button" aria-pressed="true">All</button>
           <button class="fbtn" id="f-review" type="button" aria-pressed="false">Needs review</button>
         </div>
+        <button class="csvbtn" id="export" type="button">Export CSV</button>
         <button class="reset" id="reset">Start over</button>
       </div>
       <div class="grid" id="grid"></div>
@@ -384,6 +391,7 @@
   $("reset").addEventListener("click", reset);
   $("f-all").addEventListener("click", () => setFilter("all"));
   $("f-review").addEventListener("click", () => setFilter("review"));
+  $("export").addEventListener("click", exportCsv);
 
   function reset() {
     files.length = 0;
@@ -402,6 +410,37 @@
     $("f-all").setAttribute("aria-pressed", String(mode === "all"));
     $("f-review").setAttribute("aria-pressed", String(mode === "review"));
     paint();
+  }
+
+  // ── CSV export ──────────────────────────────────────────
+  // Exports the whole batch (not just the current filter); the in_scope and
+  // review_reason columns let the reviewer sort the queue in their own tool.
+  function csvCell(v) {
+    const s = v == null ? "" : String(v);
+    return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  }
+
+  function exportCsv() {
+    if (!state.rows.length) return;
+    const header = ["filename", "room_tag", "prediction", "confidence", "in_scope", "review_reason"];
+    const lines = [header.join(",")];
+    state.rows.forEach(({ it }) => {
+      const row = it.error
+        ? [it.filename, "", "", "", "false", "invalid"]
+        : [it.filename, it.label, it.prediction, it.confidence.toFixed(4),
+           String(it.in_scope), it.review_reason || ""];
+      lines.push(row.map(csvCell).join(","));
+    });
+    // Leading BOM so Excel reads UTF-8 filenames correctly; CRLF per RFC 4180.
+    const csv = "﻿" + lines.join("\r\n") + "\r\n";
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `interior-tags-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
   }
 
   function handleFiles(list) {
