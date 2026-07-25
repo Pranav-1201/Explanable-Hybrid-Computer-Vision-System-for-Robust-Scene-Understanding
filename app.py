@@ -121,6 +121,48 @@ class UploadError(ValueError):
         self.status = status
 
 
+# ── Real-estate scoping (B-15) ─────────────────────────────────
+# This stays a GENERAL 67-class MIT Indoor scene model; it was NOT retrained or
+# purpose-built for real estate. It is deliberately SCOPED into a focused
+# interior/property tagger: a prediction in this curated home-relevant subset is
+# surfaced as a room tag, and anything else is routed to the review queue as
+# out-of-scope (reusing the existing calibrated rejection machinery, not a new
+# model). Keys are raw MIT class dirs; values are display labels for the UI.
+HOME_CLASS_LABELS = {
+    "artstudio":     "Art studio",
+    "bar":           "Bar / lounge",
+    "bathroom":      "Bathroom",
+    "bedroom":       "Bedroom",
+    "children_room": "Children's room",
+    "closet":        "Closet",
+    "corridor":      "Hallway",
+    "dining_room":   "Dining room",
+    "gameroom":      "Game room",
+    "garage":        "Garage",
+    "greenhouse":    "Greenhouse / sunroom",
+    "gym":           "Home gym",
+    "kitchen":       "Kitchen",
+    "laundromat":    "Laundry room",
+    "library":       "Home library",
+    "livingroom":    "Living room",
+    "lobby":         "Lobby / entryway",
+    "nursery":       "Nursery",
+    "office":        "Home office",
+    "pantry":        "Pantry",
+    "poolinside":    "Indoor pool",
+    "stairscase":    "Staircase",
+    "studiomusic":   "Studio",
+    "winecellar":    "Wine cellar",
+}
+MAX_BATCH_IMAGES = 50
+
+
+def pretty_label(cls: str) -> str:
+    """Display label for a raw class: curated home label if present, else a
+    title-cased fallback so out-of-scope predictions still read cleanly."""
+    return HOME_CLASS_LABELS.get(cls, cls.replace("_", " ").title())
+
+
 def discover_classes():
     for split in ("train", "test"):
         d = os.path.join(DATA_DIR, split)
@@ -398,6 +440,96 @@ def predict():
             "error": "Internal error while processing the image.",
             "error_id": error_id,
         }), 500
+
+
+@app.route("/predict_batch", methods=["POST"])
+def predict_batch():
+    """Batch interior tagging for the real-estate workflow (B-15).
+
+    Accepts multiple images (repeatable form field 'images'), runs the served
+    CNN on each, and returns a per-image room tag plus a review flag. An image
+    is routed to the review queue when the top-1 confidence is below the
+    calibrated rejection threshold (low_confidence) or the predicted class is
+    outside the curated home subset (out_of_scope). Grad-CAM is intentionally
+    omitted here for throughput - the single /predict endpoint provides it on
+    demand. Per-file failures are reported inline and never abort the batch.
+    """
+    if baseline_model is None:
+        return jsonify({"error": "Baseline model not loaded."}), 503
+    if not classes:
+        return jsonify({"error": "No classes found."}), 503
+
+    files = request.files.getlist("images")
+    if not files:
+        return jsonify({"error": "No images provided (form field 'images')."}), 400
+    if len(files) > MAX_BATCH_IMAGES:
+        return jsonify({"error": f"Too many images ({len(files)}); "
+                                 f"max {MAX_BATCH_IMAGES} per batch."}), 400
+
+    use_tta = request.values.get("tta", "1") != "0"
+    from inference.tta import tta_predict, single_predict
+
+    try:
+        results, tagged, review = [], 0, 0
+        for fs in files:
+            name = fs.filename or "(unnamed)"
+
+            # Per-file validation errors are reported, not fatal to the batch.
+            try:
+                pil = load_validated_image(fs)
+            except UploadError as e:
+                results.append({"filename": name, "error": e.message,
+                                "review": True, "review_reason": "invalid"})
+                review += 1
+                continue
+
+            rgb = pil.convert("RGB")
+            if use_tta:
+                probs = tta_predict(baseline_model, rgb, DEVICE,
+                                    scaler=temperature_scaler).numpy()
+            else:
+                probs = single_predict(baseline_model, rgb, DEVICE,
+                                       scaler=temperature_scaler).numpy()
+
+            idx = int(np.argmax(probs))
+            cls = classes[idx]
+            conf = float(probs[idx])
+            top5_idx = np.argsort(probs)[::-1][:5]
+
+            low_conf = conf < CONFIDENCE_THRESHOLD
+            out_scope = cls not in HOME_CLASS_LABELS
+            in_scope = not (low_conf or out_scope)
+            reason = "low_confidence" if low_conf else ("out_of_scope" if out_scope else None)
+            tagged += int(in_scope)
+            review += int(not in_scope)
+
+            results.append({
+                "filename":      name,
+                "prediction":    cls,
+                "label":         pretty_label(cls),
+                "confidence":    conf,
+                "in_scope":      in_scope,
+                "review":        not in_scope,
+                "review_reason": reason,
+                "top5": [
+                    {"class": classes[i], "label": pretty_label(classes[i]),
+                     "prob": float(probs[i])}
+                    for i in top5_idx
+                ],
+            })
+
+        return jsonify({
+            "results":   results,
+            "summary":   {"n": len(files), "tagged": tagged, "review": review},
+            "threshold": CONFIDENCE_THRESHOLD,
+            "tta_used":  use_tta,
+        })
+
+    except Exception:
+        error_id = uuid.uuid4().hex[:12]
+        app.logger.exception("Unhandled error in /predict_batch (error_id=%s)", error_id)
+        return jsonify({"error": "Internal error while processing the batch.",
+                        "error_id": error_id}), 500
 
 
 if __name__ == "__main__":
