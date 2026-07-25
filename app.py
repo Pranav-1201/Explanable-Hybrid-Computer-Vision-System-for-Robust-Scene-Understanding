@@ -18,7 +18,7 @@ sys.path.insert(0, ROOT)
 
 import numpy as np
 import torch
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from PIL import Image
 
@@ -440,6 +440,15 @@ def predict():
             "error": "Internal error while processing the image.",
             "error_id": error_id,
         }), 500
+
+
+FRONTEND_DIR = os.path.join(ROOT, "frontend")
+
+
+@app.route("/")
+def index():
+    """Serve the interior-tagger single-page app (same-origin as the API)."""
+    return send_from_directory(FRONTEND_DIR, "index.html")
 
 
 @app.route("/predict_batch", methods=["POST"])
