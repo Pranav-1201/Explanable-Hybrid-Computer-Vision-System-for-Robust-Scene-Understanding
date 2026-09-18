@@ -63,3 +63,6 @@ package-lock.json
 /IMG_SIZE
 /np.ndarray
 /proves
+
+# Serving artifacts built by scripts/export_serving_artifacts.py
+dist/

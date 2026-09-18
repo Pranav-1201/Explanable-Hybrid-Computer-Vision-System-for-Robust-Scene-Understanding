@@ -30,6 +30,7 @@ from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
 from pytorch_grad_cam.utils.image import show_cam_on_image
 
 from data.dataset_loader import get_transforms
+from serving.artifacts import ArtifactError, load_classes
 
 app = Flask(__name__)
 CORS(app)
@@ -87,7 +88,7 @@ def build_baseline_model(num_classes: int):
     return model, model.layer4[-1]
 
 MODELS_DIR = os.path.join(ROOT, "models")
-DATA_DIR   = os.path.join(ROOT, "data", "MIT_Indoor")
+CLASSES_PATH = os.path.join(MODELS_DIR, "classes.json")
 
 # If top-1 confidence is below this, flag prediction as out-of-scope
 CONFIDENCE_THRESHOLD = 0.30
@@ -163,19 +164,14 @@ def pretty_label(cls: str) -> str:
     return HOME_CLASS_LABELS.get(cls, cls.replace("_", " ").title())
 
 
-def discover_classes():
-    for split in ("train", "test"):
-        d = os.path.join(DATA_DIR, split)
-        if os.path.isdir(d):
-            return sorted(x for x in os.listdir(d)
-                          if os.path.isdir(os.path.join(d, x)))
-    return []
-
-
 def load_models():
     global baseline_model, classes, baseline_target_layer
 
-    classes     = discover_classes()
+    try:
+        classes = load_classes(CLASSES_PATH)
+    except ArtifactError as e:
+        print(f"[WARN] {e}")
+        classes = []
     num_classes = max(len(classes), 1)
 
     # ── Baseline CNN (Phase-2 ResNet-50 if present, else ResNet-18) ────────
@@ -357,8 +353,7 @@ def predict():
         return jsonify({"error": "Baseline model not loaded. "
                                  "Run: python training/train_baseline.py"}), 503
     if not classes:
-        return jsonify({"error": "No classes found. "
-                                 "Check data/MIT_Indoor/train exists."}), 503
+        return jsonify({"error": "No classes loaded. Check models/classes.json."}), 503
 
     try:
         pil_img = load_validated_image(request.files["image"])
