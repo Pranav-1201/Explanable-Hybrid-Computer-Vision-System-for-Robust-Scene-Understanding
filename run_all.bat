@@ -12,6 +12,6 @@ echo Detecting compute device...
 python -c "import torch; print('GPU' if torch.cuda.is_available() else 'CPU')"
 echo.
 
-python pipeline_timer.py
+python scripts\pipeline_timer.py
 
 pause
