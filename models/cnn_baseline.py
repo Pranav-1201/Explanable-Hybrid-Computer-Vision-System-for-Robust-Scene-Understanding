@@ -7,11 +7,22 @@ class CNNBaseline(nn.Module):
     Baseline CNN for MIT Indoor Scene Classification with multiple backbone support.
     """
 
-    def __init__(self, num_classes: int = 67, backbone: str = 'resnet50_places365_local'):
+    def __init__(self, num_classes: int = 67, backbone: str = 'resnet50_places365_local',
+                 pretrained: bool = True):
         super().__init__()
         self.backbone_name = backbone
 
-        if backbone == 'resnet50_places365':
+        if not pretrained:
+            # Architecture only: the caller loads a full checkpoint on top, so
+            # reading or downloading pretrained weights here is wasted work and
+            # a hard dependency on files/network a container does not have.
+            if backbone.startswith('resnet50'):
+                self.model = models.resnet50(weights=None)
+            elif backbone == 'resnet18_imagenet':
+                self.model = models.resnet18(weights=None)
+            else:
+                raise ValueError(f"Unknown backbone: {backbone}")
+        elif backbone == 'resnet50_places365':
             try:
                 self.model = torch.hub.load(
                     'CSAILVision/places365',
