@@ -1,0 +1,8 @@
+{
+  "weights": {
+    "filename": "phase2_ema.pth",
+    "url": "https://github.com/Pranav-1201/Explanable-Hybrid-Computer-Vision-System-for-Robust-Scene-Understanding/releases/download/model-v1/phase2_ema.pth",
+    "sha256": "6ef66350373067ee7e21d07700ad52607bb939673370f23c8fef4cfc2c6925dd",
+    "size": 98693509
+  }
+}

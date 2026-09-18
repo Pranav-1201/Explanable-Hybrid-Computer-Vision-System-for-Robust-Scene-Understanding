@@ -30,7 +30,7 @@ from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
 from pytorch_grad_cam.utils.image import show_cam_on_image
 
 from data.dataset_loader import get_transforms
-from serving.artifacts import ArtifactError, load_classes
+from serving.artifacts import ArtifactError, ensure_weights, load_classes, load_manifest
 
 app = Flask(__name__)
 CORS(app)
@@ -59,36 +59,37 @@ baseline_target_layer = None   # Grad-CAM target layer, set to match served arch
 classes               = []
 
 
-def build_baseline_model(num_classes: int):
-    """Return (loaded_model, gradcam_target_layer) for the best available CNN.
-
-    Prefers the Phase-2 ResNet-50 (Places365) at models/phase2_best.pth, loading
-    the winning raw/EMA weights recorded in the checkpoint (best_is_ema). Falls
-    back to the ResNet-18 baseline.pth (train_baseline.build_model) when Phase 2
-    is absent. baseline.pth is a raw ResNet-18 state_dict — loading it into
-    CNNBaseline (ResNet-50) was the serving crash (audit N3).
-    """
-    from utils.checkpoint import load_checkpoint
-    phase2 = os.path.join(MODELS_DIR, "phase2_best.pth")
-    if os.path.exists(phase2):
-        from models.cnn_baseline import CNNBaseline
-        meta     = torch.load(phase2, map_location="cpu", weights_only=True)
-        backbone = meta.get("backbone", "resnet50_places365_local")
-        load_ema = bool(meta.get("best_is_ema", False))
-        model = CNNBaseline(num_classes, backbone=backbone)
-        load_checkpoint(phase2, model, device=DEVICE, load_ema=load_ema)
-        print(f"[INFO] Serving Phase-2 {backbone} (load_ema={load_ema}, "
-              f"val_acc={meta.get('val_acc', float('nan')):.2f}%)")
-        return model, model.model.layer4[-1]
-
-    from training.train_baseline import build_model
-    model = build_model(num_classes)
-    load_checkpoint(os.path.join(MODELS_DIR, "baseline.pth"), model, device=DEVICE)
-    print("[INFO] Serving ResNet-18 baseline (phase2_best.pth not found)")
-    return model, model.layer4[-1]
-
 MODELS_DIR = os.path.join(ROOT, "models")
 CLASSES_PATH = os.path.join(MODELS_DIR, "classes.json")
+MANIFEST_PATH = os.path.join(MODELS_DIR, "serving_manifest.json")
+
+
+def build_baseline_model(num_classes: int):
+    """Return (loaded_model, gradcam_target_layer) for the served checkpoint.
+
+    Weights are the EMA-only export described in models/serving_manifest.json.
+    They are downloaded and sha256-verified on first start when absent, so a
+    fresh clone or container needs neither the dataset nor hand-placed files.
+    MODEL_PATH relocates the file (e.g. a container volume); MODEL_URL
+    overrides the download source. The checksum is enforced either way.
+    """
+    from models.cnn_baseline import CNNBaseline
+    from utils.checkpoint import load_checkpoint
+
+    manifest = load_manifest(MANIFEST_PATH)
+    path = os.environ.get("MODEL_PATH") or os.path.join(MODELS_DIR, manifest["filename"])
+    url = os.environ.get("MODEL_URL") or manifest["url"]
+    ensure_weights(path, url, manifest["sha256"], manifest["size"])
+
+    meta = torch.load(path, map_location="cpu", weights_only=True)
+    if int(meta["num_classes"]) != num_classes:
+        raise ArtifactError(f"{path} has {meta['num_classes']} outputs but "
+                            f"classes.json lists {num_classes} classes")
+    model = CNNBaseline(num_classes, backbone=meta["backbone"], pretrained=False)
+    load_checkpoint(path, model, device=DEVICE)
+    print(f"[INFO] Serving {meta['backbone']} EMA from {path} "
+          f"(val_acc={meta['val_acc']:.2f}%)")
+    return model, model.model.layer4[-1]
 
 # If top-1 confidence is below this, flag prediction as out-of-scope
 CONFIDENCE_THRESHOLD = 0.30
@@ -172,19 +173,16 @@ def load_models():
     except ArtifactError as e:
         print(f"[WARN] {e}")
         classes = []
-    num_classes = max(len(classes), 1)
 
-    # ── Baseline CNN (Phase-2 ResNet-50 if present, else ResNet-18) ────────
-    phase2_path   = os.path.join(MODELS_DIR, "phase2_best.pth")
-    baseline_path = os.path.join(MODELS_DIR, "baseline.pth")
-    if os.path.exists(phase2_path) or os.path.exists(baseline_path):
-        try:
-            baseline_model, baseline_target_layer = build_baseline_model(num_classes)
-            baseline_model.to(DEVICE).eval()
-        except Exception as e:
-            print(f"[WARN] Could not load baseline model: {e}")
-            baseline_model = None
-            baseline_target_layer = None
+    try:
+        if not classes:
+            raise ArtifactError("no classes loaded; cannot size the model head")
+        baseline_model, baseline_target_layer = build_baseline_model(len(classes))
+        baseline_model.to(DEVICE).eval()
+    except Exception as e:
+        print(f"[WARN] Could not load baseline model: {e}")
+        baseline_model = None
+        baseline_target_layer = None
 
     # Load temperature scaler at startup
     global temperature_scaler
