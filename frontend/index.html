@@ -466,21 +466,47 @@
     URL.revokeObjectURL(url);
   }
 
-  function handleFiles(list) {
+  // Must equal FILES_PER_REQUEST in serving/uploads.py (tests/test_uploads.py guards it).
+  const CHUNK_SIZE = 8;
+
+  async function postChunk(chunk) {
+    const form = new FormData();
+    chunk.forEach((f) => form.append("images", f));
+    const failed = (msg) => ({
+      results: chunk.map((f) => ({ filename: f.name, error: msg, review: true, review_reason: "error" })),
+    });
+    try {
+      const r = await fetch("/predict_batch", { method: "POST", body: form });
+      const data = await r.json().catch(() => null);
+      if (r.ok && data && data.results) return data;
+      return failed((data && data.error) || `Server returned ${r.status}.`);
+    } catch (_) {
+      return failed("Could not reach the tagger. Is the server running?");
+    }
+  }
+
+  async function handleFiles(list) {
     const picked = Array.from(list).slice(0, 50);
     if (!picked.length) return;
-    const form = new FormData();
-    picked.forEach(f => { files.push(f); form.append("images", f); });
+    picked.forEach((f) => files.push(f));
     $("empty").classList.add("hidden");
     $("results").classList.remove("hidden");
     const grid = $("grid");
     grid.setAttribute("aria-busy", "true");
     grid.innerHTML = `<div class="dz-note" style="grid-column:1/-1">Tagging ${picked.length} photo(s)…</div>`;
 
-    fetch("/predict_batch", { method: "POST", body: form })
-      .then(r => r.json())
-      .then(render)
-      .catch(() => { $("grid").innerHTML = `<div class="dz-note" style="grid-column:1/-1;color:var(--error)">Could not reach the tagger. Is the server running?</div>`; });
+    // Sequential chunks keep each request under the server's body cap; results
+    // are appended in upload order so render()'s file indexing stays aligned.
+    const merged = [];
+    let threshold = null;
+    for (let i = 0; i < picked.length; i += CHUNK_SIZE) {
+      const data = await postChunk(picked.slice(i, i + CHUNK_SIZE));
+      merged.push(...data.results);
+      if (data.threshold != null) threshold = data.threshold;
+    }
+    const tagged = merged.filter((it) => it.in_scope).length;
+    render({ results: merged, threshold,
+             summary: { n: merged.length, tagged, review: merged.length - tagged } });
   }
 
   // ── render results ──────────────────────────────────────

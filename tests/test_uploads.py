@@ -1,0 +1,61 @@
+"""Upload validation, importable without the model (app.py loads it at import)."""
+import io
+import os
+import re
+
+import pytest
+from PIL import Image
+from werkzeug.datastructures import FileStorage
+
+from serving import uploads
+from serving.uploads import UploadError, load_validated_image
+
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
+
+def _image(fmt="JPEG", size=(64, 48)):
+    buf = io.BytesIO()
+    Image.new("RGB", size, (120, 80, 40)).save(buf, format=fmt)
+    return buf.getvalue()
+
+
+def _fs(data, name="x.jpg"):
+    return FileStorage(stream=io.BytesIO(data), filename=name)
+
+
+def test_valid_jpeg_is_returned():
+    assert load_validated_image(_fs(_image())).size == (64, 48)
+
+
+def test_empty_file_is_400():
+    with pytest.raises(UploadError) as e:
+        load_validated_image(_fs(b""))
+    assert e.value.status == 400
+
+
+def test_file_over_per_file_limit_is_413():
+    with pytest.raises(UploadError) as e:
+        load_validated_image(_fs(b"\0" * (uploads.MAX_UPLOAD_BYTES + 1)))
+    assert e.value.status == 413
+
+
+def test_non_image_is_400():
+    with pytest.raises(UploadError) as e:
+        load_validated_image(_fs(b"not an image at all"))
+    assert e.value.status == 400
+
+
+def test_too_small_is_400():
+    with pytest.raises(UploadError):
+        load_validated_image(_fs(_image(size=(16, 16))))
+
+
+def test_request_cap_fits_a_full_chunk_of_max_size_files():
+    assert uploads.MAX_REQUEST_BYTES >= uploads.FILES_PER_REQUEST * uploads.MAX_UPLOAD_BYTES
+
+
+def test_frontend_chunk_size_matches_server():
+    with open(os.path.join(ROOT, "frontend", "index.html"), encoding="utf-8") as f:
+        m = re.search(r"const CHUNK_SIZE = (\d+);", f.read())
+    assert m, "frontend must declare const CHUNK_SIZE"
+    assert int(m.group(1)) == uploads.FILES_PER_REQUEST
