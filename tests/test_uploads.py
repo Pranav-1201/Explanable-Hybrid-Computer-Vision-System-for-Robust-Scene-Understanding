@@ -71,3 +71,22 @@ def test_unsupported_format_message_is_actionable():
     with pytest.raises(UploadError) as e:
         load_validated_image(_fs(_image("GIF"), name="x.gif"))
     assert "HEIF" in e.value.message and "convert" in e.value.message.lower()
+
+
+def _noisy(fmt):
+    buf = io.BytesIO()
+    Image.effect_noise((320, 240), 60).convert("RGB").save(buf, format=fmt)
+    return buf.getvalue()
+
+
+@pytest.mark.parametrize("fmt", ["JPEG", "HEIF"])
+@pytest.mark.parametrize("keep", [0.5, 0.9])
+def test_truncated_image_is_a_clean_400(fmt, keep):
+    data = _noisy(fmt)
+    with pytest.raises(UploadError) as e:
+        load_validated_image(_fs(data[: int(len(data) * keep)]))
+    assert e.value.status == 400
+
+
+def test_intact_noisy_image_still_loads():
+    assert load_validated_image(_fs(_noisy("JPEG"))).size == (320, 240)

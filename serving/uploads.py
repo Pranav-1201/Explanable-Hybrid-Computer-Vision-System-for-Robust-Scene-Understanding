@@ -89,4 +89,13 @@ def load_validated_image(file_storage) -> Image.Image:
     if w * h > MAX_TOTAL_PIXELS:
         raise UploadError(
             f"Image has too many pixels ({w * h}); maximum is {MAX_TOTAL_PIXELS}.")
+
+    # Force full decode to catch truncated pixel data (Pillow verify() does not
+    # detect it for JPEG or HEIF; the error would surface later at convert(),
+    # inside /predict_batch's batch-wide error handler, 500'ing the whole request).
+    try:
+        img.load()
+    except Exception:
+        raise UploadError("File is not a readable image (it may be truncated or corrupt).") from None
+
     return img
