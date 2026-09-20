@@ -59,3 +59,15 @@ def test_frontend_chunk_size_matches_server():
         m = re.search(r"const CHUNK_SIZE = (\d+);", f.read())
     assert m, "frontend must declare const CHUNK_SIZE"
     assert int(m.group(1)) == uploads.FILES_PER_REQUEST
+
+
+@pytest.mark.parametrize("fmt", ["AVIF", "HEIF"])
+def test_phone_formats_decode(fmt):
+    img = load_validated_image(_fs(_image(fmt), name=f"x.{fmt.lower()}"))
+    assert img.convert("RGB").size == (64, 48)
+
+
+def test_unsupported_format_message_is_actionable():
+    with pytest.raises(UploadError) as e:
+        load_validated_image(_fs(_image("GIF"), name="x.gif"))
+    assert "HEIF" in e.value.message and "convert" in e.value.message.lower()

@@ -6,12 +6,16 @@ request cap (MAX_REQUEST_BYTES) only has to admit one frontend chunk.
 """
 import os
 
+import pillow_heif
 from PIL import Image
+
+# iPhone default capture format. AVIF is decoded natively by Pillow 12.
+pillow_heif.register_heif_opener()
 
 MAX_UPLOAD_BYTES  = 10 * 1024 * 1024        # per file
 FILES_PER_REQUEST = 8                       # frontend CHUNK_SIZE must match
 MAX_REQUEST_BYTES = FILES_PER_REQUEST * MAX_UPLOAD_BYTES + 10 * 1024 * 1024  # + multipart headroom
-ALLOWED_FORMATS   = {"JPEG", "PNG", "WEBP", "BMP"}
+ALLOWED_FORMATS   = {"JPEG", "PNG", "WEBP", "BMP", "AVIF", "HEIF"}
 MIN_SIDE_PX       = 32                      # below this the CNN input is meaningless
 MAX_SIDE_PX       = 10_000
 MAX_TOTAL_PIXELS  = 40_000_000              # ~40 MP decompression-bomb guard
@@ -68,7 +72,8 @@ def load_validated_image(file_storage) -> Image.Image:
     if fmt not in ALLOWED_FORMATS:
         raise UploadError(
             f"Unsupported image format {fmt or 'unknown'!r}. "
-            f"Allowed: {', '.join(sorted(ALLOWED_FORMATS))}.")
+            f"Accepted: {', '.join(sorted(ALLOWED_FORMATS))}. "
+            f"Convert the photo to JPEG and try again.")
 
     # verify() consumes the file object, so reopen for actual use.
     stream.seek(0)
