@@ -62,6 +62,7 @@ torchvision==0.20.1+cu121
 tqdm==4.67.3
 ttach==0.0.3
 typing_extensions==4.15.0
+waitress==3.0.2
 Werkzeug==3.1.7
 
 # --- dev / testing (B-9 regression suite; run: python -m pytest tests/) ---

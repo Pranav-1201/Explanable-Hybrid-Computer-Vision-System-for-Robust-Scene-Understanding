@@ -10,6 +10,7 @@ import base64
 import warnings
 import logging
 import uuid
+import threading
 
 warnings.filterwarnings("ignore")
 
@@ -31,10 +32,11 @@ from pytorch_grad_cam.utils.image import show_cam_on_image
 
 from data.dataset_loader import get_transforms
 from serving.artifacts import ArtifactError, ensure_weights, load_classes, load_manifest
+from serving.config import cors_origins, env_flag
 from serving.uploads import (MAX_REQUEST_BYTES, UploadError, load_validated_image)
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, origins=cors_origins())
 
 # Unhandled-error tracebacks are logged, never returned to the client (N14).
 # Configure a sink so app.logger.exception() is actually recorded rather than
@@ -58,6 +60,12 @@ print(f"[INFO] Using device: {DEVICE}")
 baseline_model        = None
 baseline_target_layer = None   # Grad-CAM target layer, set to match served arch
 classes               = []
+
+# One model, shared by every waitress thread. Grad-CAM registers forward and
+# backward hooks on it, and concurrent forward passes would interleave those
+# hooks, so all model execution is serialised. Upload parsing and validation
+# still run concurrently. On CPU this costs little throughput.
+INFERENCE_LOCK = threading.Lock()
 
 
 MODELS_DIR = os.path.join(ROOT, "models")
@@ -140,12 +148,14 @@ def pretty_label(cls: str) -> str:
     return HOME_CLASS_LABELS.get(cls, cls.replace("_", " ").title())
 
 
-def load_models():
+def load_models(strict: bool = False):
     global baseline_model, classes, baseline_target_layer
 
     try:
         classes = load_classes(CLASSES_PATH)
     except ArtifactError as e:
+        if strict:
+            raise
         print(f"[WARN] {e}")
         classes = []
 
@@ -155,6 +165,8 @@ def load_models():
         baseline_model, baseline_target_layer = build_baseline_model(len(classes))
         baseline_model.to(DEVICE).eval()
     except Exception as e:
+        if strict:
+            raise
         print(f"[WARN] Could not load baseline model: {e}")
         baseline_model = None
         baseline_target_layer = None
@@ -202,7 +214,9 @@ def load_models():
     #   checkpoint: models/fusion_best.pth
 
 
-load_models()
+# STRICT_STARTUP=1 (set in the container) turns a missing or unverifiable
+# artifact into a startup failure instead of a server that only returns 503s.
+load_models(strict=env_flag("STRICT_STARTUP"))
 
 
 @app.errorhandler(413)
@@ -268,8 +282,7 @@ def predict():
                                  f"(see README ablation)."}), 400
 
     if model_type == "baseline" and baseline_model is None:
-        return jsonify({"error": "Baseline model not loaded. "
-                                 "Run: python training/train_baseline.py"}), 503
+        return jsonify({"error": "Model not loaded; see the server log."}), 503
     if not classes:
         return jsonify({"error": "No classes loaded. Check models/classes.json."}), 503
 
@@ -295,41 +308,42 @@ def predict():
             # imperceptible in the demo. Opt out per-request with tta=0.
             tta_param = request.values.get("tta", "1")
 
-            if tta_param != "0":
-                try:
-                    probs = tta_predict(baseline_model, pil_img.convert("RGB"), DEVICE, scaler=temperature_scaler).numpy()
-                    result["tta_used"] = True
-                except Exception as e:
+            with INFERENCE_LOCK:
+                if tta_param != "0":
+                    try:
+                        probs = tta_predict(baseline_model, pil_img.convert("RGB"), DEVICE, scaler=temperature_scaler).numpy()
+                        result["tta_used"] = True
+                    except Exception as e:
+                        probs = single_predict(baseline_model, pil_img.convert("RGB"), DEVICE, scaler=temperature_scaler).numpy()
+                        result["tta_used"] = False
+                        result["tta_error"] = str(e)
+                else:
                     probs = single_predict(baseline_model, pil_img.convert("RGB"), DEVICE, scaler=temperature_scaler).numpy()
                     result["tta_used"] = False
-                    result["tta_error"] = str(e)
-            else:
-                probs = single_predict(baseline_model, pil_img.convert("RGB"), DEVICE, scaler=temperature_scaler).numpy()
-                result["tta_used"] = False
 
-            result["calibrated"] = temperature_scaler is not None
-            result["temperature"] = temperature_scaler.T if temperature_scaler else 1.0
+                result["calibrated"] = temperature_scaler is not None
+                result["temperature"] = temperature_scaler.T if temperature_scaler else 1.0
 
-            pred_idx = int(np.argmax(probs))
-            top5_idx = np.argsort(probs)[::-1][:5]
+                pred_idx = int(np.argmax(probs))
+                top5_idx = np.argsort(probs)[::-1][:5]
 
-            result.update({
-                "prediction": classes[pred_idx],
-                "confidence": float(probs[pred_idx]),
-                "top5": [
-                    {"class": classes[i], "prob": float(probs[i])}
-                    for i in top5_idx
-                ],
-            })
+                result.update({
+                    "prediction": classes[pred_idx],
+                    "confidence": float(probs[pred_idx]),
+                    "top5": [
+                        {"class": classes[i], "prob": float(probs[i])}
+                        for i in top5_idx
+                    ],
+                })
 
-            try:
-                result["gradcam"] = run_gradcam(
-                    baseline_model, input_tensor,
-                    baseline_target_layer,
-                    pred_idx, image_f
-                )
-            except Exception as e:
-                result["gradcam_error"] = str(e)
+                try:
+                    result["gradcam"] = run_gradcam(
+                        baseline_model, input_tensor,
+                        baseline_target_layer,
+                        pred_idx, image_f
+                    )
+                except Exception as e:
+                    result["gradcam_error"] = str(e)
 
         # ── Confidence-based rejection ──────────────────────
         if result.get("confidence", 1.0) < CONFIDENCE_THRESHOLD:
@@ -406,12 +420,13 @@ def predict_batch():
                 continue
 
             rgb = pil.convert("RGB")
-            if use_tta:
-                probs = tta_predict(baseline_model, rgb, DEVICE,
-                                    scaler=temperature_scaler).numpy()
-            else:
-                probs = single_predict(baseline_model, rgb, DEVICE,
-                                       scaler=temperature_scaler).numpy()
+            with INFERENCE_LOCK:
+                if use_tta:
+                    probs = tta_predict(baseline_model, rgb, DEVICE,
+                                        scaler=temperature_scaler).numpy()
+                else:
+                    probs = single_predict(baseline_model, rgb, DEVICE,
+                                           scaler=temperature_scaler).numpy()
 
             idx = int(np.argmax(probs))
             cls = classes[idx]
