@@ -1,6 +1,6 @@
 import pytest
 
-from serving.config import cors_origins, env_flag, env_int
+from serving.config import cors_origins, env_flag, env_int, predict_rate_limit
 
 
 @pytest.mark.parametrize("raw,expected", [("1", True), ("true", True), ("ON", True),
@@ -30,3 +30,11 @@ def test_cors_origins():
     assert cors_origins({"CORS_ORIGINS": "*"}) == "*"
     assert cors_origins({"CORS_ORIGINS": "https://a.example, https://b.example"}) == [
         "https://a.example", "https://b.example"]
+
+
+def test_predict_rate_limit_default():
+    assert predict_rate_limit({}) == "30 per minute"
+
+
+def test_predict_rate_limit_override():
+    assert predict_rate_limit({"PREDICT_RATE_LIMIT": "5 per second"}) == "5 per second"

@@ -30,3 +30,12 @@ def cors_origins(environ=os.environ):
     if raw in ("", "*"):
         return "*"
     return [o.strip() for o in raw.split(",") if o.strip()]
+
+
+def predict_rate_limit(environ=os.environ):
+    """flask-limiter limit string for the inference endpoints (/predict,
+    /predict_batch). These do real model forward passes -- unlike /health,
+    /classes and /, which stay unlimited so the Docker HEALTHCHECK and the
+    frontend shell can never be starved by this."""
+    raw = environ.get("PREDICT_RATE_LIMIT", "").strip()
+    return raw or "30 per minute"

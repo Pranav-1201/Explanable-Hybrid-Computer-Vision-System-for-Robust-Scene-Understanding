@@ -30,13 +30,33 @@ from pytorch_grad_cam import GradCAM
 from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
 from pytorch_grad_cam.utils.image import show_cam_on_image
 
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+
 from data.dataset_loader import get_transforms
 from serving.artifacts import ArtifactError, ensure_weights, load_classes, load_manifest
-from serving.config import cors_origins, env_flag
+from serving.config import cors_origins, env_flag, predict_rate_limit
 from serving.uploads import (MAX_REQUEST_BYTES, UploadError, load_validated_image)
 
 app = Flask(__name__)
 CORS(app, origins=cors_origins())
+
+# In-memory storage: fine for the single waitress process this serves today
+# (B4). Move to a shared backend (e.g. Redis) before running multiple
+# processes/replicas, or the limit becomes per-process instead of global.
+limiter = Limiter(get_remote_address, app=app, headers_enabled=True,
+                  storage_uri="memory://")
+
+
+@app.after_request
+def _security_headers(response):
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    # frontend/index.html is a single self-contained file: no external
+    # scripts, styles or fonts, so a strict same-origin policy costs nothing.
+    response.headers["Content-Security-Policy"] = "default-src 'self'"
+    return response
 
 # Unhandled-error tracebacks are logged, never returned to the client (N14).
 # Configure a sink so app.logger.exception() is actually recorded rather than
@@ -266,6 +286,7 @@ def get_classes():
 
 # ── Predict endpoint ───────────────────────────────────────────
 @app.route("/predict", methods=["POST"])
+@limiter.limit(predict_rate_limit())
 def predict():
     if "image" not in request.files:
         return jsonify({"error": "No image file provided"}), 400
@@ -378,6 +399,7 @@ def index():
 
 
 @app.route("/predict_batch", methods=["POST"])
+@limiter.limit(predict_rate_limit())
 def predict_batch():
     """Batch interior tagging for the real-estate workflow (B-15).
 

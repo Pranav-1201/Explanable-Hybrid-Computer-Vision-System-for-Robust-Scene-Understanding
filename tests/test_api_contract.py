@@ -129,3 +129,26 @@ def test_predict_batch_threshold_boundary(client, app_module, monkeypatch, epsil
     row = resp.get_json()["results"][0]
     assert row["in_scope"] is expect_in_scope
     assert row["review_reason"] == (None if expect_in_scope else "low_confidence")
+
+
+# ── B7: security headers + rate limiting wiring ─────────────────
+
+def test_security_headers_present(client):
+    resp = client.get("/health")
+    assert resp.headers["X-Content-Type-Options"] == "nosniff"
+    assert resp.headers["X-Frame-Options"] == "DENY"
+    assert resp.headers["Content-Security-Policy"] == "default-src 'self'"
+
+
+def test_predict_is_rate_limited(client):
+    """Confirms the limiter is actually wired to /predict (not just imported):
+    flask-limiter's per-request headers appear only on a limited route."""
+    data = {"image": (io.BytesIO(_image_bytes()), "x.jpg")}
+    resp = client.post("/predict", data=data, content_type="multipart/form-data")
+    assert "X-RateLimit-Limit" in resp.headers
+
+
+def test_health_is_not_rate_limited(client):
+    """/health backs the Docker HEALTHCHECK -- it must never be throttled."""
+    resp = client.get("/health")
+    assert "X-RateLimit-Limit" not in resp.headers
