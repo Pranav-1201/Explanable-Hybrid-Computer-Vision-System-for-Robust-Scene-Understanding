@@ -1,0 +1,41 @@
+name: docker-smoke
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build serve image
+        run: docker build --target serve -t cvdl-serve .
+
+      - name: Build test image
+        run: docker build --target test -t cvdl-test .
+
+      - name: Image carries no dataset and no weights
+        run: |
+          docker run --rm --entrypoint sh cvdl-serve -c '
+            test ! -e data/MIT_Indoor &&
+            test ! -e /models/phase2_ema.pth &&
+            test -z "$(find /app /models \( -name "*.pth" -o -name "*.pth.tar" -o -name "*.pkl" \) 2>/dev/null)" &&
+            echo "clean: no dataset, no checkpoints"'
+
+      - name: Unit tests inside the image
+        run: docker run --rm cvdl-test
+
+      - name: Start container
+        run: docker run -d --name cvdl -p 7860:7860 cvdl-serve
+
+      - name: Smoke test against the running container
+        run: docker run --rm --network host cvdl-test python scripts/smoke_test.py --base http://127.0.0.1:7860 --health-timeout 600
+
+      - name: Container logs
+        if: always()
+        run: docker logs cvdl || true
