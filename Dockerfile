@@ -14,7 +14,7 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-RUN pip install --index-url https://download.pytorch.org/whl/cpu torch==2.5.1 torchvision==0.20.1
+RUN pip install --extra-index-url https://download.pytorch.org/whl/cpu torch==2.5.1 torchvision==0.20.1
 COPY requirements-serve.txt .
 RUN pip install -r requirements-serve.txt
 
