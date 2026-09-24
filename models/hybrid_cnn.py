@@ -10,9 +10,7 @@
 #   - L2 weight decay applied in optimizer, not here
 # ============================================================
 
-import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 
 class ResidualBlock(nn.Module):

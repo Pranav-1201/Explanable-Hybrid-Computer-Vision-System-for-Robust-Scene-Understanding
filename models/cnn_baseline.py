@@ -30,7 +30,7 @@ class CNNBaseline(nn.Module):
                     pretrained=True,
                     trust_repo=True
                 )
-            except Exception as e:
+            except Exception:
                 print("[WARNING] Places365 hub load failed. Falling back to ResNet-50 ImageNet weights.")
                 from torchvision.models import ResNet50_Weights
                 self.model = models.resnet50(weights=ResNet50_Weights.DEFAULT)

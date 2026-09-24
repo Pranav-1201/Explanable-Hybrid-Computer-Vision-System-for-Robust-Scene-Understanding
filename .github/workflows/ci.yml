@@ -1,0 +1,32 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install CPU torch + serving + test dependencies
+        run: |
+          pip install --extra-index-url https://download.pytorch.org/whl/cpu torch==2.5.1+cpu torchvision==0.20.1+cpu
+          pip install -r requirements-test.txt
+
+      - name: Lint (pyflakes rules only, scoped to the served/tested path)
+        run: >
+          ruff check app.py serve.py serving/ inference/ models/*.py utils/
+          tests/ scripts/smoke_test.py scripts/field_rerun.py
+          scripts/export_serving_artifacts.py --select F
+
+      - name: Unit tests
+        run: python -m pytest tests/ -q -p no:cacheprovider

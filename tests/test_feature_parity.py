@@ -6,7 +6,6 @@ drift and the tripwire below fails. This is the skew that is easiest to
 silently reintroduce, so it is guarded most tightly.
 """
 import numpy as np
-import pytest
 from PIL import Image
 
 from preprocessing.extract_hog_features import extract_features_from_rgb, compute_features

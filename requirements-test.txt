@@ -8,6 +8,7 @@ networkx==3.4.2
 pluggy==1.6.0
 pygments==2.21.0
 pytest==9.1.1
+ruff==0.16.8
 scikit-image==0.25.2
 tifffile==2025.5.10
 tomli==2.4.1

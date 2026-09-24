@@ -181,7 +181,7 @@ def load_models(strict: bool = False):
         print(f"[LOADED] Temperature scaler  T={temperature_scaler.T:.4f}")
     else:
         print("[INFO] No temperature scaler found. Confidence scores are uncalibrated.")
-        print(f"       Run: python calibration/run_calibration.py")
+        print("       Run: python calibration/run_calibration.py")
 
     # Rejection threshold from calibrated confidence (B-8). The 0.30 default was
     # fit against UNCALIBRATED confidence and over-rejected valid predictions;
