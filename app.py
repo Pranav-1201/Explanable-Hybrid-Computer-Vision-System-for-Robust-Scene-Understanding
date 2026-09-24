@@ -353,7 +353,6 @@ def predict():
         else:
             result["out_of_scope"] = False
 
-        result["original_image"] = ndarray_to_b64(image_rgb)
         return jsonify(result)
 
     except Exception:
