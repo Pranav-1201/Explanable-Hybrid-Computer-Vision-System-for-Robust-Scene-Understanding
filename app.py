@@ -56,9 +56,19 @@ def _security_headers(response):
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-    # frontend/index.html is a single self-contained file: no external
-    # scripts, styles or fonts, so a strict same-origin policy costs nothing.
-    response.headers["Content-Security-Policy"] = "default-src 'self'"
+    # frontend/index.html is deliberately single-file with no build step
+    # (README) -- its <script> and <style> are inline, not external, so
+    # 'unsafe-inline' is required for the page to run at all; and it renders
+    # uploaded-photo thumbnails from blob: object URLs, which 'self' does
+    # NOT cover (it only matches http(s) same-origin, not the blob: scheme).
+    # Both were found by actually loading the page in a browser, not by the
+    # HTTP-level contract tests, which never execute JS or render images.
+    # Still no external scripts/styles/fonts/images are allowed -- that
+    # XSS-vector reduction is what this header is actually buying.
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; script-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline'; img-src 'self' blob:"
+    )
     return response
 
 # Unhandled-error tracebacks are logged, never returned to the client (N14).
@@ -298,7 +308,10 @@ def health():
 
 @app.route("/classes", methods=["GET"])
 def get_classes():
-    return jsonify({"classes": classes})
+    # home_labels is the single source of truth for the frontend's review-
+    # queue correction dropdown (F2) -- never duplicate HOME_CLASS_LABELS
+    # client-side, or the two will drift.
+    return jsonify({"classes": classes, "home_labels": HOME_CLASS_LABELS})
 
 
 @app.route("/metrics", methods=["GET"])

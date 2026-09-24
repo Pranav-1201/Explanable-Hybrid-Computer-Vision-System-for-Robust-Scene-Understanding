@@ -137,7 +137,16 @@ def test_security_headers_present(client):
     resp = client.get("/health")
     assert resp.headers["X-Content-Type-Options"] == "nosniff"
     assert resp.headers["X-Frame-Options"] == "DENY"
-    assert resp.headers["Content-Security-Policy"] == "default-src 'self'"
+    csp = resp.headers["Content-Security-Policy"]
+    assert "default-src 'self'" in csp
+    # frontend/index.html's <script>/<style> are inline with no build step;
+    # a bare default-src 'self' silently breaks the whole page (verified
+    # live in a browser) -- these must stay whitelisted.
+    assert "script-src 'self' 'unsafe-inline'" in csp
+    assert "style-src 'self' 'unsafe-inline'" in csp
+    # blob: object URLs back every uploaded-photo thumbnail; 'self' alone
+    # does not cover the blob: scheme.
+    assert "img-src 'self' blob:" in csp
 
 
 def test_predict_is_rate_limited(client):
@@ -172,3 +181,13 @@ def test_metrics_reflects_recent_predict_calls(client):
 def test_metrics_is_not_rate_limited(client):
     resp = client.get("/metrics")
     assert "X-RateLimit-Limit" not in resp.headers
+
+
+# ── F2: /classes exposes the home-label map for the correction UI ──
+
+def test_classes_includes_home_labels(client, app_module):
+    resp = client.get("/classes")
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["home_labels"] == app_module.HOME_CLASS_LABELS
+    assert set(body["home_labels"]).issubset(set(body["classes"]))

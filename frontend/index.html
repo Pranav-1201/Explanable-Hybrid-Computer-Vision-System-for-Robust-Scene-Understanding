@@ -129,6 +129,12 @@
     display: inline-block; margin-top: 18px; font-family: var(--mono); font-size: 13px;
     color: var(--accent); border: 1px solid var(--accent); padding: 8px 16px; border-radius: 8px;
   }
+  .dz-folder {
+    display: block; margin: 10px auto 0; font: inherit; font-family: var(--mono); font-size: 12px;
+    color: var(--ink-soft); background: none; border: none; text-decoration: underline;
+    cursor: pointer; padding: 4px;
+  }
+  .dz-folder:hover { color: var(--accent); }
   .dz-note { margin-top: 22px; font-size: 12px; color: var(--ink-soft); font-family: var(--mono); }
 
   /* ── Summary bar ────────────────────────────────────────── */
@@ -186,11 +192,35 @@
   .card {
     border: 1px solid var(--hairline); border-radius: var(--radius);
     background: var(--surface); overflow: hidden; box-shadow: var(--shadow);
-    cursor: pointer; text-align: left; padding: 0; font: inherit; color: inherit;
     display: flex; flex-direction: column;
     transition: transform .12s ease, box-shadow .12s ease;
   }
   .card:hover { transform: translateY(-2px); box-shadow: 0 4px 8px rgba(27,29,33,.1), 0 14px 30px rgba(27,29,33,.12); }
+  /* Opens the detail dialog. A <select>/<button> can't nest inside another
+     <button> (invalid HTML, breaks AT), so this wraps only the thumb+body
+     and .card-actions sits beside it as a sibling. */
+  .card-open {
+    cursor: pointer; text-align: left; padding: 0; font: inherit; color: inherit;
+    background: none; border: none; display: flex; flex-direction: column; width: 100%;
+  }
+  .card-actions { padding: 0 13px 13px; display: flex; gap: 8px; align-items: center; }
+  .correct-select {
+    flex: 1; font: inherit; font-family: var(--mono); font-size: 11.5px;
+    padding: 6px 8px; border-radius: 6px; border: 1px solid var(--hairline);
+    background: var(--surface-2); color: var(--ink);
+  }
+  .correct-select.corrected { border-color: var(--confident); color: var(--confident); }
+  .retry-btn {
+    flex: 1; font: inherit; font-family: var(--mono); font-size: 11.5px;
+    padding: 6px 8px; border-radius: 6px; border: 1px solid var(--error); color: var(--error);
+    background: none; cursor: pointer;
+  }
+  .retry-btn:hover { background: color-mix(in srgb, var(--error) 10%, transparent); }
+  .retry-btn:disabled { opacity: .6; cursor: default; }
+  .progress-note {
+    grid-column: 1/-1; font-family: var(--mono); font-size: 13px; color: var(--ink-soft);
+    padding: 8px 2px;
+  }
   .thumb { aspect-ratio: 4 / 3; width: 100%; object-fit: cover; background: var(--surface-2); display: block; }
   .card-body { padding: 12px 13px 13px; display: flex; flex-direction: column; gap: 9px; }
   .tag-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
@@ -291,9 +321,11 @@
         <div class="dz-title">Drop property photos here</div>
         <div class="dz-sub">JPEG, PNG or WEBP · up to 50 at once</div>
         <span class="dz-pick">Choose files</span>
+        <button type="button" class="dz-folder" id="folder-pick">or choose a folder</button>
         <div class="dz-note">Nothing is stored — images are tagged in memory and discarded.</div>
       </div>
       <input type="file" id="file-input" accept="image/*" multiple class="hidden" />
+      <input type="file" id="folder-input" webkitdirectory multiple class="hidden" />
     </section>
 
     <!-- Results -->
@@ -363,6 +395,12 @@
   const $ = (id) => document.getElementById(id);
   const files = [];            // File objects, index-aligned with results
   const urlCache = new Map();  // fileIdx -> objectURL (created once, revoked on reset)
+
+  // Single source of truth is the server's HOME_CLASS_LABELS (F2) -- fetched
+  // once at load, not duplicated here. Cards render fine before this
+  // resolves; the correction <select> just has no options until it does.
+  let homeLabels = {};
+  fetch("/classes").then((r) => r.json()).then((d) => { homeLabels = d.home_labels || {}; }).catch(() => {});
   const state = {
     rows: [],        // { it, fileIdx } for every result in the current batch
     filter: "all",   // "all" | "review"
@@ -387,13 +425,19 @@
   });
 
   // ── upload wiring ───────────────────────────────────────
-  const dz = $("dropzone"), input = $("file-input");
+  const dz = $("dropzone"), input = $("file-input"), folderInput = $("folder-input");
   dz.addEventListener("click", () => input.click());
   dz.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); input.click(); } });
   ["dragover", "dragenter"].forEach(ev => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.add("drag"); }));
   ["dragleave", "drop"].forEach(ev => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.remove("drag"); }));
   dz.addEventListener("drop", (e) => handleFiles(e.dataTransfer.files));
   input.addEventListener("change", () => handleFiles(input.files));
+  // F4: a folder input (webkitdirectory) rather than recursive drag-drop
+  // directory traversal (DataTransferItem.webkitGetAsEntry), which is
+  // inconsistent across browsers -- this covers the same "pick a whole
+  // folder" need with far less risk.
+  $("folder-pick").addEventListener("click", (e) => { e.stopPropagation(); folderInput.click(); });
+  folderInput.addEventListener("change", () => handleFiles(folderInput.files));
   $("reset").addEventListener("click", reset);
   $("f-all").addEventListener("click", () => { setFilter("all"); announceFilter(); });
   $("f-review").addEventListener("click", () => { setFilter("review"); announceFilter(); });
@@ -426,6 +470,7 @@
     $("results").classList.add("hidden");
     $("empty").classList.remove("hidden");
     input.value = "";
+    folderInput.value = "";
   }
 
   function setFilter(mode) {
@@ -438,6 +483,8 @@
   // ── CSV export ──────────────────────────────────────────
   // Exports the whole batch (not just the current filter); the in_scope and
   // review_reason columns let the reviewer sort the queue in their own tool.
+  // corrected_tag (F2) is empty unless the reviewer picked a correction
+  // inline on that card.
   function csvCell(v) {
     const s = v == null ? "" : String(v);
     return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
@@ -445,13 +492,14 @@
 
   function exportCsv() {
     if (!state.rows.length) return;
-    const header = ["filename", "room_tag", "prediction", "confidence", "in_scope", "review_reason"];
+    const header = ["filename", "room_tag", "prediction", "confidence", "in_scope", "review_reason", "corrected_tag"];
     const lines = [header.join(",")];
     state.rows.forEach(({ it }) => {
+      const corrected = it.correctedTag ? (homeLabels[it.correctedTag] || it.correctedTag) : "";
       const row = it.error
-        ? [it.filename, "", "", "", "false", "invalid"]
+        ? [it.filename, "", "", "", "false", it.review_reason || "invalid", corrected]
         : [it.filename, it.label, it.prediction, it.confidence.toFixed(4),
-           String(it.in_scope), it.review_reason || ""];
+           String(it.in_scope), it.review_reason || "", corrected];
       lines.push(row.map(csvCell).join(","));
     });
     // Leading BOM so Excel reads UTF-8 filenames correctly; CRLF per RFC 4180.
@@ -485,69 +533,112 @@
     }
   }
 
+  function updateSummary() {
+    const tagged = state.rows.filter((r) => r.it.in_scope).length;
+    $("s-total").textContent = state.rows.length;
+    $("s-tagged").textContent = tagged;
+    $("s-review").textContent = state.rows.length - tagged;
+  }
+
   async function handleFiles(list) {
     const picked = Array.from(list).slice(0, 50);
     if (!picked.length) return;
-    picked.forEach((f) => files.push(f));
     $("empty").classList.add("hidden");
     $("results").classList.remove("hidden");
-    const grid = $("grid");
-    grid.setAttribute("aria-busy", "true");
-    grid.innerHTML = `<div class="dz-note" style="grid-column:1/-1">Tagging ${picked.length} photo(s)…</div>`;
+    $("grid").setAttribute("aria-busy", "true");
 
-    // Sequential chunks keep each request under the server's body cap; results
-    // are appended in upload order so render()'s file indexing stays aligned.
-    const merged = [];
-    let threshold = null;
+    // Sequential chunks keep each request under the server's body cap; each
+    // chunk paints as soon as it resolves (F1) instead of the whole batch
+    // waiting for the last one. Results are appended in upload order so
+    // fileIdx alignment stays correct across chunks.
+    const totalChunks = Math.ceil(picked.length / CHUNK_SIZE);
+    let chunkNum = 0;
     for (let i = 0; i < picked.length; i += CHUNK_SIZE) {
-      const data = await postChunk(picked.slice(i, i + CHUNK_SIZE));
-      merged.push(...data.results);
-      if (data.threshold != null) threshold = data.threshold;
+      const chunk = picked.slice(i, i + CHUNK_SIZE);
+      const startFileIdx = files.length;
+      chunk.forEach((f) => files.push(f));
+      chunkNum++;
+
+      const data = await postChunk(chunk);
+      if (data.threshold != null) state.threshold = data.threshold;
+      data.results.forEach((it, j) => state.rows.push({ it, fileIdx: startFileIdx + j }));
+
+      updateSummary();
+      const doneCount = Math.min(i + CHUNK_SIZE, picked.length);
+      paint(chunkNum < totalChunks ? `Tagging photo ${doneCount} of ${picked.length}…` : null);
     }
-    const tagged = merged.filter((it) => it.in_scope).length;
-    render({ results: merged, threshold,
-             summary: { n: merged.length, tagged, review: merged.length - tagged } });
+
+    setFilter("all");   // resets the toggle and does the final paint
+    const tagged = state.rows.filter((r) => r.it.in_scope).length;
+    announce(`Tagged ${state.rows.length} photo${state.rows.length === 1 ? "" : "s"}: `
+           + `${tagged} in scope, ${state.rows.length - tagged} need review.`);
   }
 
-  // ── render results ──────────────────────────────────────
-  function render(data) {
-    if (!data || !data.results) return;
-    state.threshold = data.threshold;
-    $("s-total").textContent = data.summary.n;
-    $("s-tagged").textContent = data.summary.tagged;
-    $("s-review").textContent = data.summary.review;
-
-    const startIdx = files.length - data.results.length;
-    state.rows = data.results.map((it, i) => ({ it, fileIdx: startIdx + i }));
-    announce(`Tagged ${data.summary.n} photo${data.summary.n === 1 ? "" : "s"}: `
-           + `${data.summary.tagged} in scope, ${data.summary.review} need review.`);
-    setFilter("all");   // resets the toggle and paints
+  async function retryOne(fileIdx, btn) {
+    btn.disabled = true; btn.textContent = "Retrying…";
+    const data = await postChunk([files[fileIdx]]);
+    const it = data.results[0];
+    const row = state.rows.find((r) => r.fileIdx === fileIdx);
+    if (row) row.it = it;
+    updateSummary();
+    paint();
+    announce(it.error ? `Retry failed for ${it.filename}.`
+                       : `Retried ${it.filename}: ${it.label || it.prediction}.`);
   }
 
-  function paint() {
+  // ── paint ─────────────────────────────────────────────────
+  // progressText: shown above the cards painted so far while more chunks
+  // are still loading; omitted (or null) once the batch is complete.
+  function paint(progressText) {
     const grid = $("grid");
-    grid.removeAttribute("aria-busy");
     grid.innerHTML = "";
+    if (progressText) {
+      const note = document.createElement("div");
+      note.className = "progress-note";
+      note.textContent = progressText;
+      grid.appendChild(note);
+    } else {
+      grid.removeAttribute("aria-busy");
+    }
     const rows = state.filter === "review"
       ? state.rows.filter((r) => r.it.review)
       : state.rows;
-    $("empty-note").classList.toggle("hidden", rows.length !== 0);
+    $("empty-note").classList.toggle("hidden", rows.length !== 0 || !!progressText);
     rows.forEach((r) => grid.appendChild(cardEl(r.it, r.fileIdx)));
   }
 
   function cardEl(it, fileIdx) {
-    const card = document.createElement(it.error ? "div" : "button");
+    // A plain <div> wrapper, never a <button>: F2's correction <select> and
+    // F5's retry <button> are siblings of the detail-opening control below,
+    // and interactive elements can't nest inside a <button> (invalid HTML,
+    // breaks assistive tech).
+    const card = document.createElement("div");
     card.className = "card" + (it.error ? " err" : "");
-    if (!it.error) card.type = "button";
 
     if (it.error) {
-      card.innerHTML = `
-        <div class="thumb">unreadable</div>
-        <div class="card-body">
-          <div class="tag-row"><span class="tag">${esc(it.filename)}</span>
-            <span class="badge err">Invalid</span></div>
-          <div class="meta"><span>${esc(it.error)}</span></div>
-        </div>`;
+      const retryable = it.review_reason === "error";
+      const thumb = document.createElement("div");
+      thumb.className = "thumb";
+      thumb.textContent = "unreadable";
+      const body = document.createElement("div");
+      body.className = "card-body";
+      body.innerHTML = `
+        <div class="tag-row"><span class="tag">${esc(it.filename)}</span>
+          <span class="badge err">${retryable ? "Failed" : "Invalid"}</span></div>
+        <div class="meta"><span>${esc(it.error)}</span></div>`;
+      card.append(thumb, body);
+
+      if (retryable) {
+        const actions = document.createElement("div");
+        actions.className = "card-actions";
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "retry-btn";
+        btn.textContent = "Retry";
+        btn.addEventListener("click", () => retryOne(fileIdx, btn));
+        actions.appendChild(btn);
+        card.appendChild(actions);
+      }
       return card;
     }
 
@@ -555,7 +646,11 @@
     const barColor = it.review ? "var(--review)" : "var(--confident)";
     const reasonTxt = it.review_reason === "out_of_scope" ? "out of scope"
                     : it.review_reason === "low_confidence" ? "low confidence" : "";
-    card.innerHTML = `
+
+    const open = document.createElement("button");
+    open.type = "button";
+    open.className = "card-open";
+    open.innerHTML = `
       <img class="thumb" alt="${esc(it.label)} photo" src="${urlFor(fileIdx)}" />
       <div class="card-body">
         <div class="tag-row">
@@ -568,10 +663,46 @@
           <span class="conf">${conf}%${reasonTxt ? ` · <span class="reason">${reasonTxt}</span>` : ""}</span>
         </div>
       </div>`;
-    card.setAttribute("aria-label",
+    open.setAttribute("aria-label",
       `${it.label} — ${it.review ? "needs review" : "tagged"}, ${conf}% confidence`
       + `${reasonTxt ? ", " + reasonTxt : ""}, ${it.filename}. Open details.`);
-    card.addEventListener("click", () => openDetail(it, fileIdx));
+    open.addEventListener("click", () => openDetail(it, fileIdx));
+    card.appendChild(open);
+
+    // F2: inline correction, no need to leave the grid. Only offered for
+    // real predictions routed to review -- not for unreadable files, which
+    // have no image to judge a correction against.
+    if (it.review) {
+      const actions = document.createElement("div");
+      actions.className = "card-actions";
+      const select = document.createElement("select");
+      select.className = "correct-select" + (it.correctedTag ? " corrected" : "");
+      select.setAttribute("aria-label", `Correct room tag for ${it.filename}`);
+      const placeholder = document.createElement("option");
+      placeholder.value = "";
+      placeholder.textContent = "Correct tag…";
+      select.appendChild(placeholder);
+      Object.keys(homeLabels)
+        .sort((a, b) => homeLabels[a].localeCompare(homeLabels[b]))
+        .forEach((cls) => {
+          const opt = document.createElement("option");
+          opt.value = cls;
+          opt.textContent = homeLabels[cls];
+          if (cls === it.correctedTag) opt.selected = true;
+          select.appendChild(opt);
+        });
+      select.addEventListener("click", (e) => e.stopPropagation());
+      select.addEventListener("change", () => {
+        it.correctedTag = select.value || undefined;
+        paint();
+        announce(it.correctedTag
+          ? `Corrected ${it.filename} to ${homeLabels[it.correctedTag]}.`
+          : `Correction cleared for ${it.filename}.`);
+      });
+      actions.appendChild(select);
+      card.appendChild(actions);
+    }
+
     return card;
   }
 
