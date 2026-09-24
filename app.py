@@ -6,7 +6,9 @@ Run with: python app.py
 import os
 import sys
 import io
+import json
 import base64
+import time
 import warnings
 import logging
 import uuid
@@ -36,6 +38,7 @@ from flask_limiter.util import get_remote_address
 from data.dataset_loader import get_transforms
 from serving.artifacts import ArtifactError, ensure_weights, load_classes, load_manifest
 from serving.config import cors_origins, env_flag, predict_rate_limit
+from serving.metrics import Metrics
 from serving.uploads import (MAX_REQUEST_BYTES, UploadError, load_validated_image)
 
 app = Flask(__name__)
@@ -66,6 +69,20 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
 )
+
+# Structured (JSON, one object per line) request log, separate from the
+# human-readable app logger above so log-shipping tools can parse it without
+# regexing the plain-text format (B8).
+access_logger = logging.getLogger("access")
+
+
+def log_request(endpoint: str, **fields):
+    access_logger.info(json.dumps({"endpoint": endpoint, **fields}))
+
+
+# Process-wide: /predict and /predict_batch latency percentiles and the
+# tagged-vs-review split (B8). Single-process only -- see serving/metrics.py.
+metrics = Metrics()
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"[INFO] Using device: {DEVICE}")
@@ -284,10 +301,17 @@ def get_classes():
     return jsonify({"classes": classes})
 
 
+@app.route("/metrics", methods=["GET"])
+def get_metrics():
+    """p50/p95 latency per endpoint and the tagged-vs-review split (B8)."""
+    return jsonify(metrics.snapshot())
+
+
 # ── Predict endpoint ───────────────────────────────────────────
 @app.route("/predict", methods=["POST"])
 @limiter.limit(predict_rate_limit())
 def predict():
+    t0 = time.monotonic()
     if "image" not in request.files:
         return jsonify({"error": "No image file provided"}), 400
 
@@ -374,6 +398,14 @@ def predict():
         else:
             result["out_of_scope"] = False
 
+        latency_ms = (time.monotonic() - t0) * 1000
+        metrics.record_latency("predict", latency_ms)
+        metrics.record_outcome(in_scope=not result["out_of_scope"])
+        log_request("predict", latency_ms=round(latency_ms, 1),
+                    prediction=result.get("prediction"),
+                    confidence=result.get("confidence"),
+                    out_of_scope=result["out_of_scope"])
+
         return jsonify(result)
 
     except Exception:
@@ -411,6 +443,7 @@ def predict_batch():
     omitted here for throughput - the single /predict endpoint provides it on
     demand. Per-file failures are reported inline and never abort the batch.
     """
+    t0 = time.monotonic()
     if baseline_model is None:
         return jsonify({"error": "Baseline model not loaded."}), 503
     if not classes:
@@ -438,6 +471,7 @@ def predict_batch():
                 results.append({"filename": name, "error": e.message,
                                 "review": True, "review_reason": "invalid"})
                 review += 1
+                metrics.record_outcome(in_scope=False)
                 continue
 
             rgb = pil.convert("RGB")
@@ -460,6 +494,7 @@ def predict_batch():
             reason = "low_confidence" if low_conf else ("out_of_scope" if out_scope else None)
             tagged += int(in_scope)
             review += int(not in_scope)
+            metrics.record_outcome(in_scope=in_scope)
 
             results.append({
                 "filename":      name,
@@ -475,6 +510,11 @@ def predict_batch():
                     for i in top5_idx
                 ],
             })
+
+        latency_ms = (time.monotonic() - t0) * 1000
+        metrics.record_latency("predict_batch", latency_ms)
+        log_request("predict_batch", latency_ms=round(latency_ms, 1),
+                    n=len(files), tagged=tagged, review=review)
 
         return jsonify({
             "results":   results,

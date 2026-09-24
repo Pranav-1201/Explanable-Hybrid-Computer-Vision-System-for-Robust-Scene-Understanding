@@ -152,3 +152,23 @@ def test_health_is_not_rate_limited(client):
     """/health backs the Docker HEALTHCHECK -- it must never be throttled."""
     resp = client.get("/health")
     assert "X-RateLimit-Limit" not in resp.headers
+
+
+# ── B8: /metrics ─────────────────────────────────────────────────
+
+def test_metrics_reflects_recent_predict_calls(client):
+    data = {"image": (io.BytesIO(_image_bytes()), "x.jpg")}
+    client.post("/predict", data=data, content_type="multipart/form-data")
+
+    resp = client.get("/metrics")
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["predict"]["requests"] >= 1
+    assert body["predict"]["p50_ms"] is not None
+    assert body["tagged"] + body["reviewed"] >= 1
+    assert 0.0 <= body["review_rate"] <= 1.0
+
+
+def test_metrics_is_not_rate_limited(client):
+    resp = client.get("/metrics")
+    assert "X-RateLimit-Limit" not in resp.headers
