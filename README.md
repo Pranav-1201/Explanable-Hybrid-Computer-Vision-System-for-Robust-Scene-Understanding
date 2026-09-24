@@ -1,5 +1,7 @@
 # Explainable Hybrid Vision for Robust Scene Understanding
 
+![docker-smoke](https://github.com/Pranav-1201/Explanable-Hybrid-Computer-Vision-System-for-Robust-Scene-Understanding/actions/workflows/docker-smoke.yml/badge.svg)
+
 This project implements an explainable hybrid computer vision system that combines deep learning with handcrafted features to improve scene understanding. The goal is to achieve higher robustness and interpretability compared to standard CNN-based approaches.
 
 ---
@@ -103,6 +105,42 @@ This project uses the **MIT Indoor Scene Recognition dataset**.
 Due to size constraints, the dataset and extracted feature files are **not included** in this repository.
 
 Please download the dataset separately and place it in the appropriate data directory before running the pipeline.
+
+---
+
+## 🚀 Run from a fresh clone
+
+The server needs **neither the dataset nor hand-placed weights**. On first start
+it downloads the EMA-only checkpoint from release
+[`model-v1`](https://github.com/Pranav-1201/Explanable-Hybrid-Computer-Vision-System-for-Robust-Scene-Understanding/releases/tag/model-v1) and verifies its sha256 against
+`models/serving_manifest.json`; class names come from `models/classes.json`.
+
+**Docker (CPU):**
+
+```bash
+docker build -t cvdl .
+docker run -p 7860:7860 -v cvdl-models:/models cvdl
+# open http://localhost:7860
+```
+
+**Local venv:**
+
+```bash
+pip install -r requirements.txt
+python serve.py            # waitress on http://localhost:5000
+```
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `MODEL_PATH` | `models/phase2_ema.pth` (`/models/phase2_ema.pth` in Docker) | where the weights live / are downloaded to |
+| `MODEL_URL` | release `model-v1` asset | alternative download source (checksum still enforced) |
+| `STRICT_STARTUP` | off (`1` in Docker) | exit on missing/unverifiable artifacts instead of serving 503s |
+| `CORS_ORIGINS` | `*` | comma-separated allowed origins |
+| `HOST` / `PORT` / `THREADS` | `0.0.0.0` / `5000` (`7860` in Docker) / `4` | waitress binding |
+
+Accepted uploads: JPEG, PNG, WEBP, BMP, AVIF, HEIC — up to 10 MB each, 50 per batch.
+The container is built, unit-tested and smoke-tested on every push by
+`.github/workflows/docker-smoke.yml`.
 
 ---
 
