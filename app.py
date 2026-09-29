@@ -37,8 +37,10 @@ from flask_limiter.util import get_remote_address
 
 from data.dataset_loader import get_transforms
 from serving.artifacts import ArtifactError, ensure_weights, load_classes, load_manifest
-from serving.config import cors_origins, env_flag, predict_rate_limit
+from serving.config import cors_origins, env_flag, env_opt_float, predict_rate_limit
 from serving.metrics import Metrics
+from serving.routing import RoutingPolicy, review_reason
+from serving.scope import HOME_CLASS_LABELS
 from serving.uploads import (MAX_REQUEST_BYTES, UploadError, load_validated_image)
 
 app = Flask(__name__)
@@ -160,33 +162,16 @@ app.config["MAX_CONTENT_LENGTH"] = MAX_REQUEST_BYTES
 # surfaced as a room tag, and anything else is routed to the review queue as
 # out-of-scope (reusing the existing calibrated rejection machinery, not a new
 # model). Keys are raw MIT class dirs; values are display labels for the UI.
-HOME_CLASS_LABELS = {
-    "artstudio":     "Art studio",
-    "bar":           "Bar / lounge",
-    "bathroom":      "Bathroom",
-    "bedroom":       "Bedroom",
-    "children_room": "Children's room",
-    "closet":        "Closet",
-    "corridor":      "Hallway",
-    "dining_room":   "Dining room",
-    "gameroom":      "Game room",
-    "garage":        "Garage",
-    "greenhouse":    "Greenhouse / sunroom",
-    "gym":           "Home gym",
-    "kitchen":       "Kitchen",
-    "laundromat":    "Laundry room",
-    "library":       "Home library",
-    "livingroom":    "Living room",
-    "lobby":         "Lobby / entryway",
-    "nursery":       "Nursery",
-    "office":        "Home office",
-    "pantry":        "Pantry",
-    "poolinside":    "Indoor pool",
-    "stairscase":    "Staircase",
-    "studiomusic":   "Studio",
-    "winecellar":    "Wine cellar",
-}
+# The subset itself lives in serving/scope.py (imported above).
 MAX_BATCH_IMAGES = 50
+
+
+def routing_policy() -> RoutingPolicy:
+    """Built per call from the live threshold. REVIEW_MARGIN_MIN and
+    REVIEW_ENTROPY_MAX switch on the optional M2 rules (off by default)."""
+    return RoutingPolicy(conf_min=CONFIDENCE_THRESHOLD,
+                         margin_min=env_opt_float("REVIEW_MARGIN_MIN"),
+                         entropy_max=env_opt_float("REVIEW_ENTROPY_MAX"))
 
 
 def pretty_label(cls: str) -> str:
@@ -264,6 +249,7 @@ def load_models(strict: bool = False):
 # STRICT_STARTUP=1 (set in the container) turns a missing or unverifiable
 # artifact into a startup failure instead of a server that only returns 503s.
 load_models(strict=env_flag("STRICT_STARTUP"))
+routing_policy()  # a malformed REVIEW_* value should stop startup, not 500 the first batch
 
 
 @app.errorhandler(413)
@@ -501,10 +487,8 @@ def predict_batch():
             conf = float(probs[idx])
             top5_idx = np.argsort(probs)[::-1][:5]
 
-            low_conf = conf < CONFIDENCE_THRESHOLD
-            out_scope = cls not in HOME_CLASS_LABELS
-            in_scope = not (low_conf or out_scope)
-            reason = "low_confidence" if low_conf else ("out_of_scope" if out_scope else None)
+            reason = review_reason(probs, cls in HOME_CLASS_LABELS, routing_policy())
+            in_scope = reason is None
             tagged += int(in_scope)
             review += int(not in_scope)
             metrics.record_outcome(in_scope=in_scope)

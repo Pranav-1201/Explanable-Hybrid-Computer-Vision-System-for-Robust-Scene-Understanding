@@ -191,3 +191,51 @@ def test_classes_includes_home_labels(client, app_module):
     body = resp.get_json()
     assert body["home_labels"] == app_module.HOME_CLASS_LABELS
     assert set(body["home_labels"]).issubset(set(body["classes"]))
+
+
+# ── M2: optional margin rule through the real endpoint ──────────
+
+def _near_tie_predict(app_module):
+    top, second = app_module.classes.index("kitchen"), app_module.classes.index("bedroom")
+
+    def _fake(model, pil_image, device, scaler=None):
+        import torch
+        probs = np.full(len(app_module.classes), 1e-6, dtype=np.float32)
+        probs[top], probs[second] = 0.55, 0.44          # confident enough, margin 0.11
+        return torch.from_numpy(probs)
+    return _fake
+
+
+def _post_probe(client):
+    files = {"images": [(io.BytesIO(_image_bytes()), "tie.jpg")]}
+    resp = client.post("/predict_batch", data=files,
+                       content_type="multipart/form-data", query_string={"tta": "0"})
+    assert resp.status_code == 200
+    return resp.get_json()["results"][0]
+
+
+def test_margin_rule_is_off_by_default(client, app_module, monkeypatch):
+    monkeypatch.delenv("REVIEW_MARGIN_MIN", raising=False)
+    monkeypatch.setattr("inference.tta.single_predict", _near_tie_predict(app_module))
+    row = _post_probe(client)
+    assert row["in_scope"] is True and row["review_reason"] is None
+
+
+def test_margin_rule_routes_a_near_tie_when_enabled(client, app_module, monkeypatch):
+    monkeypatch.setenv("REVIEW_MARGIN_MIN", "0.3")
+    monkeypatch.setattr("inference.tta.single_predict", _near_tie_predict(app_module))
+    row = _post_probe(client)
+    assert row["in_scope"] is False and row["review_reason"] == "low_margin"
+
+
+def test_malformed_review_setting_fails_loudly(app_module, monkeypatch):
+    monkeypatch.setenv("REVIEW_ENTROPY_MAX", "abc")
+    with pytest.raises(ValueError):
+        app_module.routing_policy()
+
+
+def test_confident_non_home_prediction_is_out_of_scope(client, app_module, monkeypatch):
+    fake = _mock_single_predict_factory(app_module, "casino", 0.95)   # casino is not a home class
+    monkeypatch.setattr("inference.tta.single_predict", fake)
+    row = _post_probe(client)
+    assert row["in_scope"] is False and row["review_reason"] == "out_of_scope"

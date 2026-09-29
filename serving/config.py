@@ -24,6 +24,17 @@ def env_int(name: str, default: int, environ=os.environ) -> int:
         raise ValueError(f"{name}={raw!r} is not an integer") from None
 
 
+def env_opt_float(name: str, environ=os.environ):
+    """None when unset/blank, else the float; a non-number fails loudly."""
+    raw = environ.get(name, "").strip()
+    if not raw:
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        raise ValueError(f"{name}={raw!r} is not a number") from None
+
+
 def cors_origins(environ=os.environ):
     """'*' (today's behaviour) unless CORS_ORIGINS lists comma-separated origins."""
     raw = environ.get("CORS_ORIGINS", "*").strip()

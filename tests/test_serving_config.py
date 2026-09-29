@@ -1,6 +1,6 @@
 import pytest
 
-from serving.config import cors_origins, env_flag, env_int, predict_rate_limit
+from serving.config import cors_origins, env_flag, env_int, env_opt_float, predict_rate_limit
 
 
 @pytest.mark.parametrize("raw,expected", [("1", True), ("true", True), ("ON", True),
@@ -23,6 +23,14 @@ def test_env_int():
     assert env_int("P", 5000, {"P": "7860"}) == 7860
     with pytest.raises(ValueError):
         env_int("P", 5000, {"P": "abc"})
+
+
+def test_env_opt_float():
+    assert env_opt_float("M", {}) is None
+    assert env_opt_float("M", {"M": "  "}) is None
+    assert env_opt_float("M", {"M": "0.25"}) == 0.25
+    with pytest.raises(ValueError):
+        env_opt_float("M", {"M": "abc"})
 
 
 def test_cors_origins():

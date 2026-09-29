@@ -644,8 +644,8 @@
 
     const conf = Math.round(it.confidence * 100);
     const barColor = it.review ? "var(--review)" : "var(--confident)";
-    const reasonTxt = it.review_reason === "out_of_scope" ? "out of scope"
-                    : it.review_reason === "low_confidence" ? "low confidence" : "";
+    const reasonTxt = { out_of_scope: "out of scope", low_confidence: "low confidence",
+                        low_margin: "close call", high_entropy: "uncertain" }[it.review_reason] || "";
 
     const open = document.createElement("button");
     open.type = "button";
