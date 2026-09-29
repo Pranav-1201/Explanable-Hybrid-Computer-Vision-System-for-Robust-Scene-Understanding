@@ -1,0 +1,133 @@
+{
+  "scoped_T": 0.6740541462128459,
+  "scoped_threshold": 0.6406781673431396,
+  "served_threshold": 0.47802734375,
+  "test": {
+    "served_67": {
+      "n": 1340,
+      "n_labelled": 1340,
+      "n_ood": 0,
+      "n_true_home": 472,
+      "top1_labelled": 0.8380597014925373,
+      "home_top1": 0.847457627118644,
+      "auto_tagged": 420,
+      "right_tags": 377,
+      "wrong_tags": 43,
+      "tag_precision": 0.8976190476190476,
+      "home_tag_recall": 0.798728813559322,
+      "non_home_false_tags": 23,
+      "non_home_photos": 868,
+      "reviewed": 920,
+      "review_rate": 0.6865671641791045,
+      "warranted_reviews": 897,
+      "review_precision": 0.975,
+      "reasons": {
+        "low_confidence": 153,
+        "out_of_scope": 767
+      },
+      "tag_precision_ci95": [
+        0.8649300763921952,
+        0.9231001688692422
+      ],
+      "home_tag_recall_ci95": [
+        0.7602105168226573,
+        0.832423670688481
+      ]
+    },
+    "scoped_25": {
+      "n": 1340,
+      "n_labelled": 1340,
+      "n_ood": 0,
+      "n_true_home": 472,
+      "top1_labelled": 0.9059701492537313,
+      "home_top1": 0.7902542372881356,
+      "auto_tagged": 366,
+      "right_tags": 334,
+      "wrong_tags": 32,
+      "tag_precision": 0.912568306010929,
+      "home_tag_recall": 0.7076271186440678,
+      "non_home_false_tags": 17,
+      "non_home_photos": 868,
+      "reviewed": 974,
+      "review_rate": 0.7268656716417911,
+      "warranted_reviews": 935,
+      "review_precision": 0.9599589322381931,
+      "reasons": {
+        "low_confidence": 110,
+        "out_of_scope": 864
+      },
+      "tag_precision_ci95": [
+        0.8791774286371824,
+        0.9373883660165289
+      ],
+      "home_tag_recall_ci95": [
+        0.6650473735538918,
+        0.7468544021630696
+      ]
+    }
+  },
+  "field": {
+    "served_67": {
+      "n": 72,
+      "n_labelled": 68,
+      "n_ood": 4,
+      "n_true_home": 26,
+      "top1_labelled": 0.7941176470588235,
+      "home_top1": 0.8461538461538461,
+      "auto_tagged": 24,
+      "right_tags": 21,
+      "wrong_tags": 3,
+      "tag_precision": 0.875,
+      "home_tag_recall": 0.8076923076923077,
+      "non_home_false_tags": 2,
+      "non_home_photos": 46,
+      "reviewed": 48,
+      "review_rate": 0.6666666666666666,
+      "warranted_reviews": 47,
+      "review_precision": 0.9791666666666666,
+      "reasons": {
+        "low_confidence": 7,
+        "out_of_scope": 41
+      },
+      "tag_precision_ci95": [
+        0.6899571185214243,
+        0.9565574496068442
+      ],
+      "home_tag_recall_ci95": [
+        0.6212336384535001,
+        0.9149306422821174
+      ]
+    },
+    "scoped_25": {
+      "n": 72,
+      "n_labelled": 68,
+      "n_ood": 4,
+      "n_true_home": 26,
+      "top1_labelled": 0.9117647058823529,
+      "home_top1": 0.8076923076923077,
+      "auto_tagged": 20,
+      "right_tags": 18,
+      "wrong_tags": 2,
+      "tag_precision": 0.9,
+      "home_tag_recall": 0.6923076923076923,
+      "non_home_false_tags": 1,
+      "non_home_photos": 46,
+      "reviewed": 52,
+      "review_rate": 0.7222222222222222,
+      "warranted_reviews": 49,
+      "review_precision": 0.9423076923076923,
+      "reasons": {
+        "low_confidence": 5,
+        "out_of_scope": 47
+      },
+      "tag_precision_ci95": [
+        0.6989617935882066,
+        0.9721341060158468
+      ],
+      "home_tag_recall_ci95": [
+        0.5001138848576876,
+        0.8349887906020732
+      ]
+    }
+  }
+}
