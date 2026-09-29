@@ -5,9 +5,9 @@ and the test suite (see [docs/TEST_CHECKLIST.md](docs/TEST_CHECKLIST.md)). It re
 where things stood at the end of the last session, not what is true now.
 
 **Last updated:** 2026-09-29, session 59024edd, Claude Sonnet 5.5 (`claude-sonnet-5-5`)
-**Branch:** `main`. Base was `origin/main` at `dff2c9b`; four local commits follow it (M2, M5/T3, M3, docs).
-Check `git log origin/main..HEAD` to see whether they were pushed.
-**Tests at last run:** `122 passed`, 122 collected (`pytest tests/ -q`); CI lint command clean.
+**Branch:** `main`. Phase B work (M2, M5/T3, M3, docs) was pushed and CI-green at `12c9d98`; M10, F6/F7 and D11/D12 followed.
+Check `git log origin/main..HEAD` to see whether the latest commits were pushed.
+**Tests at last run:** `132 passed`, 132 collected (`pytest tests/ -q`); CI lint command clean.
 
 ## Roadmap status (`FAANG_AUDIT_ROADMAP.md`)
 
@@ -18,6 +18,7 @@ Check `git log origin/main..HEAD` to see whether they were pushed.
 | D Product UX | done (F1, F2, F4, F5) |
 | E CI / regression | T1, T4 done. T3 is a local gate: `evaluation/field_eval.py --check` (CI cannot see the private photos) |
 | B Accuracy and trust | M5 done, M2 built and OFF, M3 measured and not shipped. **Acceptance not met**: cloister and nursery still auto-tagged; the 26-photo home subset cannot judge ">= 90%" |
+| Everything else non-deployment | M10 batched inference (2.49x, D11), F6 keyboard flow and F7 confidence tooltip done. B10, M9, B9, M4, M6, M7, M8 deliberately not built, with reasons in D12 |
 | F Deployment | not started; needs Pranav's Hugging Face account (CONSTRAINTS #3) |
 
 ## What Phase B produced
@@ -27,6 +28,9 @@ Check `git log origin/main..HEAD` to see whether they were pushed.
 - `training/train_scoped.py`, `evaluation/scoped_compare.py`, `reports/scoped_compare.md`: the scoped 24 + other model. Test tag precision 0.898 -> 0.913, home recall 0.799 -> 0.708; field 0.875 -> 0.900 and 0.808 -> 0.692. Not shipped (D10). `models/scoped_best.pth` exists locally only (git-ignored).
 - `reports/review_routing.md`: why margin/entropy and five other scores do not help.
 - Guide documents: `CLAUDE.md`, `docs/` ARCHITECTURE, FLOW, DECISIONS (D1 to D10), CONSTRAINTS, TEST_CHECKLIST, ROLLBACK, `traces/`.
+
+- `inference/tta.py` `tta_predict_batch` / `single_predict_batch` + `tests/test_tta_batch.py`; `/predict_batch` does one forward pass per request (D11).
+- `frontend/index.html`: `j`/`k`/`c` keyboard flow and the confidence tooltip, checked with real key presses in a browser.
 
 ## Where the field photos are
 

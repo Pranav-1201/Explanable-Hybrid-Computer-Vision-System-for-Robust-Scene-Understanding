@@ -21,12 +21,15 @@ browser  frontend/index.html
   |  chunks of 8 files (FILES_PER_REQUEST must match the frontend's CHUNK_SIZE)
   v
 app.predict_batch                      rate limit: PREDICT_RATE_LIMIT (30/min default)
-  |  for each file:
+  |  phase 1, for each file (no model involved):
   |-- serving/uploads.py:load_validated_image   decode fully; reject -> per-file
-  |                                             {"review_reason": "invalid"}, batch continues
+  |                                             {"review_reason": "invalid"} in that file's slot
+  |  phase 2, once for all valid files:
   |-- INFERENCE_LOCK
-  |     inference/tta.py:tta_predict            3 views -> temperature-scaled probs, averaged
-  |     (or single_predict when ?tta=0)
+  |     inference/tta.py:tta_predict_batch      3 views x N images stacked into ONE forward pass,
+  |                                             each view temperature-scaled, views averaged
+  |     (or single_predict_batch when ?tta=0)   an all-invalid batch never reaches the model
+  |  phase 3, per valid file, results written back into their upload slots:
   |-- serving/routing.py:review_reason          probs + (class in HOME_CLASS_LABELS) + policy
   |       low_confidence -> out_of_scope -> low_margin* -> high_entropy*   (* opt-in)
   |-- serving/metrics.py                        record outcome and latency
@@ -40,7 +43,7 @@ the optional rules.
 
 ## `POST /predict` (single image, with explanation)
 
-Same validation and TTA, then Grad-CAM (`run_gradcam`, still under the lock)
+Same validation and per-image TTA (`tta_predict`; batching applies to `/predict_batch` only), then Grad-CAM (`run_gradcam`, still under the lock)
 and a simpler rule: confidence below the threshold becomes
 `"Unknown / Out of Scope"`. It does **not** use `serving/routing.py` and has no
 home-class scoping; that is a difference to know about, not an oversight to

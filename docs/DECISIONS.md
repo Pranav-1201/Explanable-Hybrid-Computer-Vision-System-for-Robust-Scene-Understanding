@@ -8,7 +8,7 @@ and session made it, because behaviour differs between model versions and
 Entries D1 to D6 were reconstructed on 2026-09-29 from commit messages and the
 Phase A to D memory notes; the earlier sessions did not record which model
 reasoned through them, so that field says "not recorded" rather than guessing.
-Do not renumber; add the next `D<n>` at the bottom. Last used id: **D10**.
+Do not renumber; add the next `D<n>` at the bottom. Last used id: **D12**.
 
 ---
 
@@ -84,4 +84,19 @@ Do not renumber; add the next `D<n>` at the bottom. Last used id: **D10**.
 - **Why it does not help:** not investigated. The evidence is only that the retrained head, on the same backbone, keeps both confident errors while losing recall.
 - **Rejected:** shipping it for the precision gain (a recall loss this size means a real user reviews far more photos for a difference we cannot distinguish from chance).
 - **Would change this:** more labelled home-class data, or a stronger backbone (M7), tested on a bigger field set. Roadmap acceptance ">= 90% home-class top-1 on the field set" is also unmeasurable here: the served model scores 0.846 on 26 home photos (95% interval roughly 0.66 to 0.94).
+- **By:** Claude Sonnet 5.5 (`claude-sonnet-5-5`), session 59024edd, 2026-09-29.
+
+### D11 - `/predict_batch` runs one batched forward pass per request (M10)
+- **Decision:** validate every file first, then stack the TTA views of all valid images into one forward pass (`inference/tta.py: tta_predict_batch`, `single_predict_batch`); results go back into their upload slots. `/predict` keeps the per-image path because it also runs Grad-CAM. Each pass is bounded to 8 images (56 tensors), matching the frontend's chunk size, so a request cannot allocate unbounded activations.
+- **Why:** the per-image loop ran 3 small forward passes per photo. Measured on the real model (RTX 4060, 16 field photos, TTA on): 3.89 s -> 1.56 s, **2.49x faster**, identical predicted class on all 16, largest probability difference 0.00045 (float16 autocast noise). CPU-only containers should gain less; that was not measured.
+- **Guard:** `tests/test_tta_batch.py` proves batched == per-image on a small BatchNorm network (tolerance 1e-5), plus order, chunking and empty-input cases; endpoint tests check one model call, upload order preserved with an invalid file in the middle, an all-invalid batch never running the model, and TTA on/off selecting the right function. Existing contract tests now fake the batch function instead of the per-image one; what they assert is unchanged.
+- **Consequence:** any future change to `tta_predict` (views, weights of the views) must be mirrored in `tta_predict_batch`; the equivalence test fails if they drift.
+- **By:** Claude Sonnet 5.5 (`claude-sonnet-5-5`), session 59024edd, 2026-09-29.
+
+### D12 - Roadmap items deliberately not built (non-deployment)
+- **Done:** F6 (keyboard: `j`/`k` between photos, `c` to the correction dropdown, verified with real key presses in a browser) and F7 (a tooltip on the confidence figure stating the live calibrated threshold).
+- **B10 API keys - not built.** Enforcing a key on `/predict*` would break the bundled same-origin UI, because a browser page cannot hold a secret. Making it useful needs a UI login or a separate keyed API surface: a product decision, not a coding one.
+- **M9 ONNX + INT8 - not built.** It adds `onnxruntime` to the serving image (CONSTRAINTS "ask first") and its benefit is CPU latency, which was not measured on the target host.
+- **B9 async job API - not built.** The frontend already sends chunks of 8 and paints incremental progress (F1); a job queue adds state without a measured need. P2 in the roadmap.
+- **M4 (listing-photo fine-tune), M7 (stronger backbone), M8 (CLIP zero-shot):** need data or models this repo does not have; D10 shows retraining a head on the current backbone does not move the errors that matter. M6 (conformal review guarantees) is unscoped.
 - **By:** Claude Sonnet 5.5 (`claude-sonnet-5-5`), session 59024edd, 2026-09-29.
