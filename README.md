@@ -41,6 +41,23 @@ Three things this actually shows:
 
 Two caveats that change how the table reads: the HOG row is a **test-time** ablation on a head that *was trained with* HOG, not a retrained no-HOG control. The ResNet-18 row is **context, not a controlled ablation** — it differs in architecture *and* recipe, so it does not isolate Places365-vs-ImageNet pretraining.
 
+### Field evaluation and review routing (Phase B)
+
+72 real photos (26 of them home-class) labelled in [`evaluation/field_labels.csv`](evaluation/field_labels.csv); the photos themselves are not in the repo. Run `python evaluation/field_eval.py --field-root <folder>` (writes `reports/field_eval.md`; `--check` compares with the recorded baseline).
+
+| Served model, field set | Value | Counted over |
+|---|---|---|
+| Tag precision | 0.875 (95% CI 0.69 to 0.96) | 24 auto-tagged photos |
+| Home tag recall | 0.808 (95% CI 0.62 to 0.91) | 26 home photos |
+| Home-class top-1 | 0.846 | 26 home photos |
+
+Two attempts to remove confidently-wrong tags both **failed to clear the bar**, and are kept as documented negative results:
+
+- **Margin / entropy routing (M2)** is implemented but off by default: about one point of precision for one point of recall, inside the noise, and it cannot flag the two known confident errors ([`reports/review_routing.md`](reports/review_routing.md)).
+- **A scoped 24 + "other" retrain (M3)** raised test tag precision 0.898 to 0.913 but cut home recall 0.799 to 0.708, and still tags both target errors ([`reports/scoped_compare.md`](reports/scoped_compare.md)). Not shipped (see [`docs/DECISIONS.md`](docs/DECISIONS.md) D10).
+
+The 26-photo home subset is too small to support a "90% home-class accuracy" claim in either direction. Project documentation for contributors: [`HANDOVER.md`](HANDOVER.md), [`docs/`](docs/).
+
 ---
 
 ## 🔍 Key Features
