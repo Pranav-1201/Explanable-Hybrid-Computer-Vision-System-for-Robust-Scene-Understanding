@@ -199,6 +199,9 @@
   /* Opens the detail dialog. A <select>/<button> can't nest inside another
      <button> (invalid HTML, breaks AT), so this wraps only the thumb+body
      and .card-actions sits beside it as a sibling. */
+  .kbd-hint { color: var(--ink-soft); font-size: 12.5px; margin: 0 0 10px; }
+  .kbd-hint kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid currentColor;
+    border-radius: 4px; padding: 0 5px; }
   .card-open {
     cursor: pointer; text-align: left; padding: 0; font: inherit; color: inherit;
     background: none; border: none; display: flex; flex-direction: column; width: 100%;
@@ -341,6 +344,7 @@
         <button class="csvbtn" id="export" type="button">Export CSV</button>
         <button class="reset" id="reset">Start over</button>
       </div>
+      <p class="kbd-hint">Keyboard: <kbd>j</kbd> / <kbd>k</kbd> next / previous photo, <kbd>c</kbd> correct the tag, <kbd>Enter</kbd> open details.</p>
       <div class="grid" id="grid" aria-label="Tagged photos"></div>
       <p class="empty-note hidden" id="empty-note">Nothing in the review queue — every photo was tagged confidently.</p>
     </section>
@@ -607,6 +611,28 @@
     rows.forEach((r) => grid.appendChild(cardEl(r.it, r.fileIdx)));
   }
 
+  // F6: reviewer keyboard flow. j / k move focus between photo cards, c jumps to
+  // the current card's correction dropdown. Ignored while typing in a control or
+  // while a dialog is open, and never with a modifier held (browser shortcuts).
+  document.addEventListener("keydown", (e) => {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (!["j", "k", "c"].includes(e.key)) return;
+    const t = e.target;
+    if (t && (t.tagName === "INPUT" || t.tagName === "SELECT" || t.tagName === "TEXTAREA")) return;
+    if (document.querySelector("dialog[open]")) return;
+    const cards = Array.from($("grid").querySelectorAll(".card"));
+    if (!cards.length) return;
+    const cur = cards.findIndex((c) => c.contains(document.activeElement));
+    if (e.key === "c") {
+      const sel = cur >= 0 && cards[cur].querySelector(".correct-select");
+      if (sel) { e.preventDefault(); sel.focus(); }
+      return;
+    }
+    const next = e.key === "j" ? Math.min(cards.length - 1, cur + 1) : Math.max(0, cur < 0 ? 0 : cur - 1);
+    const target = cards[next].querySelector(".card-open, .retry-btn");
+    if (target) { e.preventDefault(); target.focus(); target.scrollIntoView({ block: "nearest" }); }
+  });
+
   function cardEl(it, fileIdx) {
     // A plain <div> wrapper, never a <button>: F2's correction <select> and
     // F5's retry <button> are siblings of the detail-opening control below,
@@ -647,6 +673,12 @@
     const reasonTxt = { out_of_scope: "out of scope", low_confidence: "low confidence",
                         low_margin: "close call", high_entropy: "uncertain" }[it.review_reason] || "";
 
+    // F7: say what the number means and why a photo lands in review. The
+    // threshold is the server's calibrated one (numeric, so safe in an attribute).
+    const confTip = state.threshold != null
+      ? `Calibrated confidence. Photos below ${Math.round(state.threshold * 100)}% go to the review queue, as do rooms outside the home set.`
+      : "Calibrated confidence.";
+
     const open = document.createElement("button");
     open.type = "button";
     open.className = "card-open";
@@ -660,7 +692,7 @@
         <div class="meter" aria-hidden="true"><i style="width:${conf}%;background:${barColor}"></i></div>
         <div class="meta">
           <span class="fname">${esc(it.filename)}</span>
-          <span class="conf">${conf}%${reasonTxt ? ` · <span class="reason">${reasonTxt}</span>` : ""}</span>
+          <span class="conf" title="${confTip}">${conf}%${reasonTxt ? ` · <span class="reason">${reasonTxt}</span>` : ""}</span>
         </div>
       </div>`;
     open.setAttribute("aria-label",
