@@ -105,13 +105,13 @@ def test_predict_batch_isolates_per_file_errors(client):
 
 # ── threshold boundary (mocked, deterministic) ──────────────────
 
-def _mock_single_predict_factory(app_module, target_class, target_prob):
+def _mock_batch_predict_factory(app_module, target_class, target_prob):
     idx = app_module.classes.index(target_class)
 
-    def _fake(model, pil_image, device, scaler=None):
+    def _fake(model, pil_images, device, scaler=None):
         import torch
-        probs = np.full(len(app_module.classes), 1e-6, dtype=np.float32)
-        probs[idx] = target_prob
+        probs = np.full((len(pil_images), len(app_module.classes)), 1e-6, dtype=np.float32)
+        probs[:, idx] = target_prob
         return torch.from_numpy(probs)
     return _fake
 
@@ -119,8 +119,8 @@ def _mock_single_predict_factory(app_module, target_class, target_prob):
 @pytest.mark.parametrize("epsilon,expect_in_scope", [(1e-4, True), (-1e-4, False)])
 def test_predict_batch_threshold_boundary(client, app_module, monkeypatch, epsilon, expect_in_scope):
     threshold = app_module.CONFIDENCE_THRESHOLD
-    fake = _mock_single_predict_factory(app_module, "kitchen", threshold + epsilon)
-    monkeypatch.setattr("inference.tta.single_predict", fake)
+    fake = _mock_batch_predict_factory(app_module, "kitchen", threshold + epsilon)
+    monkeypatch.setattr("inference.tta.single_predict_batch", fake)
 
     files = {"images": [(io.BytesIO(_image_bytes()), "probe.jpg")]}
     resp = client.post("/predict_batch", data=files,
@@ -198,10 +198,10 @@ def test_classes_includes_home_labels(client, app_module):
 def _near_tie_predict(app_module):
     top, second = app_module.classes.index("kitchen"), app_module.classes.index("bedroom")
 
-    def _fake(model, pil_image, device, scaler=None):
+    def _fake(model, pil_images, device, scaler=None):
         import torch
-        probs = np.full(len(app_module.classes), 1e-6, dtype=np.float32)
-        probs[top], probs[second] = 0.55, 0.44          # confident enough, margin 0.11
+        probs = np.full((len(pil_images), len(app_module.classes)), 1e-6, dtype=np.float32)
+        probs[:, top], probs[:, second] = 0.55, 0.44    # confident enough, margin 0.11
         return torch.from_numpy(probs)
     return _fake
 
@@ -216,14 +216,14 @@ def _post_probe(client):
 
 def test_margin_rule_is_off_by_default(client, app_module, monkeypatch):
     monkeypatch.delenv("REVIEW_MARGIN_MIN", raising=False)
-    monkeypatch.setattr("inference.tta.single_predict", _near_tie_predict(app_module))
+    monkeypatch.setattr("inference.tta.single_predict_batch", _near_tie_predict(app_module))
     row = _post_probe(client)
     assert row["in_scope"] is True and row["review_reason"] is None
 
 
 def test_margin_rule_routes_a_near_tie_when_enabled(client, app_module, monkeypatch):
     monkeypatch.setenv("REVIEW_MARGIN_MIN", "0.3")
-    monkeypatch.setattr("inference.tta.single_predict", _near_tie_predict(app_module))
+    monkeypatch.setattr("inference.tta.single_predict_batch", _near_tie_predict(app_module))
     row = _post_probe(client)
     assert row["in_scope"] is False and row["review_reason"] == "low_margin"
 
@@ -235,7 +235,65 @@ def test_malformed_review_setting_fails_loudly(app_module, monkeypatch):
 
 
 def test_confident_non_home_prediction_is_out_of_scope(client, app_module, monkeypatch):
-    fake = _mock_single_predict_factory(app_module, "casino", 0.95)   # casino is not a home class
-    monkeypatch.setattr("inference.tta.single_predict", fake)
+    fake = _mock_batch_predict_factory(app_module, "casino", 0.95)   # casino is not a home class
+    monkeypatch.setattr("inference.tta.single_predict_batch", fake)
     row = _post_probe(client)
     assert row["in_scope"] is False and row["review_reason"] == "out_of_scope"
+
+
+# ── M10: one batched forward pass, results in upload order ──────
+
+def test_batch_runs_a_single_forward_pass_and_keeps_upload_order(client, app_module, monkeypatch):
+    calls = []
+    order = [app_module.classes.index(c) for c in ("kitchen", "casino", "bedroom")]
+
+    def _fake(model, pil_images, device, scaler=None):
+        import torch
+        calls.append(len(pil_images))
+        probs = np.full((len(pil_images), len(app_module.classes)), 1e-6, dtype=np.float32)
+        for i in range(len(pil_images)):
+            probs[i, order[i]] = 0.9                      # distinct class per position
+        return torch.from_numpy(probs)
+
+    monkeypatch.setattr("inference.tta.single_predict_batch", _fake)
+    files = {"images": [(io.BytesIO(_image_bytes()), "a.jpg"), (io.BytesIO(b""), "bad.jpg"),
+                        (io.BytesIO(_image_bytes()), "b.jpg"), (io.BytesIO(_image_bytes()), "c.jpg")]}
+    resp = client.post("/predict_batch", data=files, content_type="multipart/form-data",
+                       query_string={"tta": "0"})
+    rows = resp.get_json()["results"]
+    assert calls == [3]                                    # 3 valid images, ONE call
+    assert [r["filename"] for r in rows] == ["a.jpg", "bad.jpg", "b.jpg", "c.jpg"]
+    assert rows[1]["review_reason"] == "invalid"
+    assert [r.get("prediction") for r in rows] == ["kitchen", None, "casino", "bedroom"]
+    assert resp.get_json()["summary"] == {"n": 4, "tagged": 2, "review": 2}   # kitchen + bedroom
+
+
+def test_batch_of_only_invalid_files_never_touches_the_model(client, app_module, monkeypatch):
+    def _boom(*a, **k):
+        raise AssertionError("model must not run when every file is invalid")
+
+    monkeypatch.setattr("inference.tta.single_predict_batch", _boom)
+    files = {"images": [(io.BytesIO(b""), "x.jpg"), (io.BytesIO(b"notanimage"), "y.jpg")]}
+    resp = client.post("/predict_batch", data=files, content_type="multipart/form-data",
+                       query_string={"tta": "0"})
+    assert resp.status_code == 200
+    assert resp.get_json()["summary"] == {"n": 2, "tagged": 0, "review": 2}
+
+
+def test_batch_uses_tta_by_default_and_single_crop_when_disabled(client, app_module, monkeypatch):
+    used = []
+
+    def _recorder(tag):
+        def _fake(model, pil_images, device, scaler=None):
+            import torch
+            used.append(tag)
+            return torch.full((len(pil_images), len(app_module.classes)), 1.0 / len(app_module.classes))
+        return _fake
+
+    monkeypatch.setattr("inference.tta.tta_predict_batch", _recorder("tta"))
+    monkeypatch.setattr("inference.tta.single_predict_batch", _recorder("single"))
+    for query, expected in (({}, "tta"), ({"tta": "0"}, "single")):
+        files = {"images": [(io.BytesIO(_image_bytes()), "p.jpg")]}
+        body = client.post("/predict_batch", data=files, content_type="multipart/form-data",
+                           query_string=query).get_json()
+        assert used[-1] == expected and body["tta_used"] is (expected == "tta")

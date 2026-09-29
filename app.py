@@ -456,57 +456,57 @@ def predict_batch():
                                  f"max {MAX_BATCH_IMAGES} per batch."}), 400
 
     use_tta = request.values.get("tta", "1") != "0"
-    from inference.tta import tta_predict, single_predict
+    from inference.tta import single_predict_batch, tta_predict_batch
 
     try:
-        results, tagged, review = [], 0, 0
-        for fs in files:
+        # Phase 1: validate every file (concurrent-safe, no model). A bad file is
+        # reported in its own slot and never aborts the batch.
+        results, tagged, review = [None] * len(files), 0, 0
+        valid = []                                   # (slot, filename, RGB image)
+        for slot, fs in enumerate(files):
             name = fs.filename or "(unnamed)"
-
-            # Per-file validation errors are reported, not fatal to the batch.
             try:
-                pil = load_validated_image(fs)
+                valid.append((slot, name, load_validated_image(fs).convert("RGB")))
             except UploadError as e:
-                results.append({"filename": name, "error": e.message,
-                                "review": True, "review_reason": "invalid"})
+                results[slot] = {"filename": name, "error": e.message,
+                                 "review": True, "review_reason": "invalid"}
                 review += 1
                 metrics.record_outcome(in_scope=False)
-                continue
 
-            rgb = pil.convert("RGB")
+        # Phase 2: one batched forward pass over every valid image (M10) instead of
+        # one small pass per image, still serialised by the model lock.
+        if valid:
+            infer = tta_predict_batch if use_tta else single_predict_batch
             with INFERENCE_LOCK:
-                if use_tta:
-                    probs = tta_predict(baseline_model, rgb, DEVICE,
-                                        scaler=temperature_scaler).numpy()
-                else:
-                    probs = single_predict(baseline_model, rgb, DEVICE,
-                                           scaler=temperature_scaler).numpy()
+                all_probs = infer(baseline_model, [im for _, _, im in valid], DEVICE,
+                                  scaler=temperature_scaler).numpy()
 
-            idx = int(np.argmax(probs))
-            cls = classes[idx]
-            conf = float(probs[idx])
-            top5_idx = np.argsort(probs)[::-1][:5]
+            policy = routing_policy()
+            for (slot, name, _), probs in zip(valid, all_probs):
+                idx = int(np.argmax(probs))
+                cls = classes[idx]
+                top5_idx = np.argsort(probs)[::-1][:5]
 
-            reason = review_reason(probs, cls in HOME_CLASS_LABELS, routing_policy())
-            in_scope = reason is None
-            tagged += int(in_scope)
-            review += int(not in_scope)
-            metrics.record_outcome(in_scope=in_scope)
+                reason = review_reason(probs, cls in HOME_CLASS_LABELS, policy)
+                in_scope = reason is None
+                tagged += int(in_scope)
+                review += int(not in_scope)
+                metrics.record_outcome(in_scope=in_scope)
 
-            results.append({
-                "filename":      name,
-                "prediction":    cls,
-                "label":         pretty_label(cls),
-                "confidence":    conf,
-                "in_scope":      in_scope,
-                "review":        not in_scope,
-                "review_reason": reason,
-                "top5": [
-                    {"class": classes[i], "label": pretty_label(classes[i]),
-                     "prob": float(probs[i])}
-                    for i in top5_idx
-                ],
-            })
+                results[slot] = {
+                    "filename":      name,
+                    "prediction":    cls,
+                    "label":         pretty_label(cls),
+                    "confidence":    float(probs[idx]),
+                    "in_scope":      in_scope,
+                    "review":        not in_scope,
+                    "review_reason": reason,
+                    "top5": [
+                        {"class": classes[i], "label": pretty_label(classes[i]),
+                         "prob": float(probs[i])}
+                        for i in top5_idx
+                    ],
+                }
 
         latency_ms = (time.monotonic() - t0) * 1000
         metrics.record_latency("predict_batch", latency_ms)

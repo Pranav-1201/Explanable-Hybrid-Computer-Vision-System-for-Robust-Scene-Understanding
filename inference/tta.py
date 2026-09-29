@@ -69,3 +69,57 @@ def single_predict(model, pil_image, device, scaler=None):
     if scaler is not None:
         return scaler.calibrate_probs(logits.unsqueeze(0))[0].cpu()
     return torch.softmax(logits, dim=0).cpu()
+
+
+def _probs_from_logits(logits, scaler):
+    if scaler is not None:
+        return scaler.calibrate_probs(logits)
+    return torch.softmax(logits, dim=-1)
+
+
+def _amp():
+    return torch.amp.autocast('cuda') if torch.cuda.is_available() else nullcontext()
+
+
+def tta_predict_batch(model, pil_images, device, scaler=None, max_images=8):
+    """tta_predict for many images with the views of ALL images stacked into
+    one forward pass (M10). Same maths as calling tta_predict per image -- each
+    image contributes 1 + 1 + 5 tensors, the five crops are averaged as logits,
+    every view is calibrated on its own and the three views are averaged -- but
+    the GPU/CPU sees one large batch instead of 3 small ones per image.
+
+    Returns (N, num_classes), row i belonging to pil_images[i]. `max_images`
+    bounds how many images share one forward pass (7 tensors each), so a large
+    request cannot allocate an unbounded activation tensor.
+    """
+    if not pil_images:
+        raise ValueError("tta_predict_batch needs at least one image")
+    model.eval()
+    out = []
+    for start in range(0, len(pil_images), max_images):
+        chunk = pil_images[start:start + max_images]
+        views = []
+        for im in chunk:
+            v1, v2, v3 = (t(im) for t in TTA_TRANSFORMS)      # v3 is (5, C, H, W)
+            views.extend([v1.unsqueeze(0), v2.unsqueeze(0), v3])
+        x = torch.cat(views).to(device)                        # (7 * len(chunk), C, H, W)
+        with torch.no_grad(), _amp():
+            logits = model(x).float().reshape(len(chunk), 7, -1)
+        per_view = torch.stack([logits[:, 0], logits[:, 1], logits[:, 2:].mean(1)], dim=1)
+        out.append(_probs_from_logits(per_view, scaler).mean(1).cpu())
+    return torch.cat(out)
+
+
+def single_predict_batch(model, pil_images, device, scaler=None, max_images=32):
+    """single_predict for many images in one forward pass. (N, num_classes)."""
+    if not pil_images:
+        raise ValueError("single_predict_batch needs at least one image")
+    model.eval()
+    out = []
+    for start in range(0, len(pil_images), max_images):
+        chunk = pil_images[start:start + max_images]
+        x = torch.stack([TTA_TRANSFORMS[0](im) for im in chunk]).to(device)
+        with torch.no_grad():
+            logits = model(x).float()
+        out.append(_probs_from_logits(logits, scaler).cpu())
+    return torch.cat(out)
