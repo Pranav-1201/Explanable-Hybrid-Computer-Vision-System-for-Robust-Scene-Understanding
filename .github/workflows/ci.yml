@@ -26,7 +26,8 @@ jobs:
         run: >
           ruff check app.py serve.py serving/ inference/ models/*.py utils/
           tests/ scripts/smoke_test.py scripts/field_rerun.py
-          scripts/export_serving_artifacts.py --select F
+          scripts/export_serving_artifacts.py evaluation/field_metrics.py
+          evaluation/field_eval.py evaluation/collect_probs.py --select F
 
       - name: Unit tests
         run: python -m pytest tests/ -q -p no:cacheprovider

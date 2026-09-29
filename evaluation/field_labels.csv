@@ -1,0 +1,73 @@
+group,filename,true_class
+testing_dataset,Artroom.jpg,artstudio
+testing_dataset,Auditorium.jpeg,auditorium
+testing_dataset,Bakery.avif,bakery
+testing_dataset,Bar.jpeg,bar
+testing_dataset,Bathroom.jpg,bathroom
+testing_dataset,Bowling.jpeg,bowling
+testing_dataset,Buffet.jpeg,buffet
+testing_dataset,Casino.jpeg,casino
+testing_dataset,Church_inside.jpeg,church_inside
+testing_dataset,airport_inside.webp,airport_inside
+testing_dataset,bedroom.avif,bedroom
+testing_dataset,bookstore.jpg,bookstore
+testing_dataset,children_room.jpeg,children_room
+testing_dataset,classroom.jpeg,classroom
+testing_dataset,cloister.jpeg,cloister
+testing_dataset,closet.jpeg,closet
+testing_dataset,clothing store.webp,clothingstore
+testing_dataset,computer room.webp,computerroom
+testing_dataset,concert hall.jpeg,concert_hall
+testing_dataset,corridor.jpeg,corridor
+testing_dataset,deli.jpeg,deli
+testing_dataset,dental office.jpeg,dentaloffice
+testing_dataset,elevator.jpeg,elevator
+testing_dataset,fast food restaurant.jpeg,fastfood_restaurant
+testing_dataset,florist.jpeg,florist
+testing_dataset,gameroom.jpeg,gameroom
+testing_dataset,garage.webp,garage
+testing_dataset,hairsalon.jpeg,hairsalon
+testing_dataset,hospital room.jpg,hospitalroom
+testing_dataset,inside_bus2.jpg,inside_bus
+testing_dataset,inside_subway2.jpg,inside_subway
+testing_dataset,jewelleryshop2.jpg,jewelleryshop
+testing_dataset,kitchen2.jpg,kitchen
+testing_dataset,laboratorywet2.jpg,laboratorywet
+testing_dataset,laundromat2.jpg,laundromat
+testing_dataset,library2.jpg,library
+testing_dataset,livingroom2.jpg,livingroom
+testing_dataset,lobby2.jpg,lobby
+testing_dataset,locker_room2.jpg,locker_room
+testing_dataset,mall2.jpg,mall
+testing_dataset,meeting_room2.jpg,meeting_room
+testing_dataset,movietheater2.jpg,movietheater
+testing_dataset,museum2.jpg,museum
+testing_dataset,nursery2.jpg,nursery
+testing_dataset,office2.jpg,office
+testing_dataset,operating_room2.jpg,operating_room
+testing_dataset,pantry2.jpg,pantry
+testing_dataset,poolinside2.jpg,poolinside
+testing_dataset,prisoncell2.jpg,prisoncell
+testing_dataset,restaurant2.jpg,restaurant
+testing_dataset,restaurant_kitchen2.jpg,restaurant_kitchen
+testing_dataset,shoeshop2.jpg,shoeshop
+testing_dataset,stairscase2.jpg,stairscase
+testing_dataset,studiomusic2.jpg,studiomusic
+testing_dataset,subway2.jpg,subway
+testing_dataset,toystore2.jpg,toystore
+testing_dataset,trainstation2.jpg,trainstation
+testing_dataset,tv_studio2.jpg,tv_studio
+testing_dataset,videostore.jpg,videostore
+testing_dataset,waitingroom2.jpg,waitingroom
+testing_dataset,warehouse2.jpg,warehouse
+testing_dataset,winecellar2.jpg,winecellar
+testing,aquarium.jpg,ood
+testing,autopsy-room.avif,ood
+testing,bar.jpg,bar
+testing,bathroom.png,bathroom
+testing,closet.jpg,closet
+testing,garage.jpg,garage
+testing,igloo.avif,ood
+testing,kitchen.jpg,kitchen
+testing,salon.jpg,hairsalon
+testing,ship.jpg,ood

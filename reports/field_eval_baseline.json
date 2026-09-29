@@ -1,0 +1,26 @@
+{
+  "policy_conf_min": 0.47802734375,
+  "metrics": {
+    "n": 72,
+    "n_labelled": 68,
+    "n_ood": 4,
+    "n_true_home": 26,
+    "top1_labelled": 0.7941176470588235,
+    "home_top1": 0.8461538461538461,
+    "auto_tagged": 24,
+    "right_tags": 21,
+    "wrong_tags": 3,
+    "tag_precision": 0.875,
+    "home_tag_recall": 0.8076923076923077,
+    "non_home_false_tags": 2,
+    "non_home_photos": 46,
+    "reviewed": 48,
+    "review_rate": 0.6666666666666666,
+    "warranted_reviews": 47,
+    "review_precision": 0.9791666666666666,
+    "reasons": {
+      "low_confidence": 7,
+      "out_of_scope": 41
+    }
+  }
+}
