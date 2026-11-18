@@ -39,7 +39,7 @@ jobs:
       # Roadmap CI1: the API smoke test cannot see what the browser blocks (audit
       # X1, a CSP-blocked Grad-CAM image). Drive the real page against the same
       # running container.
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
