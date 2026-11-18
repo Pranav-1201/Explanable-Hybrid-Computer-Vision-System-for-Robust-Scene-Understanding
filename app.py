@@ -306,6 +306,16 @@ def get_metrics():
     return jsonify(metrics.snapshot())
 
 
+def _soft_failure(what: str) -> str:
+    """For a part of /predict that failed but did not stop the request (TTA,
+    Grad-CAM). Logs the traceback server-side against an error_id and returns
+    only a generic message: raw exception text can carry file paths and
+    library internals (CONSTRAINTS rule 6, audit X10). Call from an except block."""
+    error_id = uuid.uuid4().hex[:12]
+    app.logger.exception("%s failed in /predict (error_id=%s)", what, error_id)
+    return f"{what} failed (error_id={error_id})"
+
+
 # ── Predict endpoint ───────────────────────────────────────────
 @app.route("/predict", methods=["POST"])
 @limiter.limit(predict_rate_limit())
@@ -357,10 +367,10 @@ def predict():
                     try:
                         probs = tta_predict(baseline_model, pil_img.convert("RGB"), DEVICE, scaler=temperature_scaler).numpy()
                         result["tta_used"] = True
-                    except Exception as e:
+                    except Exception:
                         probs = single_predict(baseline_model, pil_img.convert("RGB"), DEVICE, scaler=temperature_scaler).numpy()
                         result["tta_used"] = False
-                        result["tta_error"] = str(e)
+                        result["tta_error"] = _soft_failure("TTA, used a single view instead")
                 else:
                     probs = single_predict(baseline_model, pil_img.convert("RGB"), DEVICE, scaler=temperature_scaler).numpy()
                     result["tta_used"] = False
@@ -386,8 +396,8 @@ def predict():
                         baseline_target_layer,
                         pred_idx, image_f
                     )
-                except Exception as e:
-                    result["gradcam_error"] = str(e)
+                except Exception:
+                    result["gradcam_error"] = _soft_failure("Grad-CAM")
 
         # ── Confidence-based rejection ──────────────────────
         if result.get("confidence", 1.0) < CONFIDENCE_THRESHOLD:

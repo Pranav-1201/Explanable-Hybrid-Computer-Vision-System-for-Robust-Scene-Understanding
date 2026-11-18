@@ -74,6 +74,28 @@ def test_predict_does_not_echo_original_image(client):
     assert "original_image" not in resp.get_json()
 
 
+def test_predict_does_not_leak_exception_text(client, app_module, monkeypatch):
+    """BK2 / CONSTRAINTS rule 6: when TTA or Grad-CAM fails, /predict still
+    answers 200 but must not put the exception text (file paths, library
+    internals) in the body. It returns a generic message and an error_id that
+    matches the server log."""
+    secret = "SECRET-internal-path C:/Users/someone/venv/torch.py"
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError(secret)
+
+    monkeypatch.setattr("inference.tta.tta_predict", _boom)
+    monkeypatch.setattr(app_module, "run_gradcam", _boom)
+    data = {"image": (io.BytesIO(_image_bytes()), "x.jpg")}
+    resp = client.post("/predict", data=data, content_type="multipart/form-data")
+    assert resp.status_code == 200
+    assert secret not in resp.get_data(as_text=True)
+    body = resp.get_json()
+    assert body["tta_used"] is False and "prediction" in body
+    for key in ("tta_error", "gradcam_error"):
+        assert "error_id=" in body[key], body[key]
+
+
 # ── /predict_batch: 51 files, per-file error isolation ──────────
 
 def test_predict_batch_too_many_files_is_400(client, app_module):
