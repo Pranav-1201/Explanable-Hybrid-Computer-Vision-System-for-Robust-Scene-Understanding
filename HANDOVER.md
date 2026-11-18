@@ -4,7 +4,22 @@ Read this first, then trust none of it until you have run `git fetch`, `git stat
 and the test suite (see [docs/TEST_CHECKLIST.md](docs/TEST_CHECKLIST.md)). It records
 where things stood at the end of the last session, not what is true now.
 
-**Last updated:** 2026-09-29, session 59024edd, Claude Sonnet 5.5 (`claude-sonnet-5-5`)
+**Last updated:** 2026-11-18, session 62c83a86, Claude Sonnet 5.5 (`claude-sonnet-5-5`). See "Roadmap 2026-11, Phase 0" below; the older sections date from 2026-09-29.
+
+## Roadmap 2026-11, Phase 0 (in progress, uncommitted)
+
+The plan is `Roadmap 2026-11\CV_DL_Elite_Roadmap_2026-11-15.docx` next to the field photos (kept outside the repo). Phase 0 rows:
+
+| Row | State |
+|---|---|
+| CI1 browser test | `scripts/browser_test.py` + `requirements-browser.txt` + a step in `docker-smoke.yml`. Locally: original page 4 of 8 checks failed, fixed page 0 failed. **Not yet run in CI.** |
+| FE10 | Grad-CAM now shown via a blob URL (CSP unchanged), `main.wrap` padding, format hint names HEIC/AVIF |
+| BK2 | `/predict` returns a generic message plus `error_id` instead of exception text; test `test_predict_does_not_leak_exception_text` |
+| DC3 | `docs/API.md` updated (home_labels, /metrics, 429, env vars, removed `original_image`). `.env.example` was NOT written: a permission deny rule blocks that filename |
+| CI3 | Not started: Dependabot and branch protection change GitHub settings, need Pranav's go-ahead; require the browser step only after it has passed once in CI |
+
+Evidence this session: `pytest tests/ -q` 133 passed (132 before, plus the BK2 test); ruff clean on the files touched. Decision D13, trace `docs/traces/2026-11-18-gradcam-csp-browser-test.md`. Nothing is committed or pushed.
+Watch for: the first CI run of the Chromium install step (`playwright install --with-deps chromium`) is untested; `tests/` still has no X2/X9 test outside the browser script.
 **Branch:** `main`. Phase B work (M2, M5/T3, M3, docs) was pushed and CI-green at `12c9d98`; M10, F6/F7 and D11/D12 followed.
 Check `git log origin/main..HEAD` to see whether the latest commits were pushed.
 **Tests at last run:** `132 passed`, 132 collected (`pytest tests/ -q`); CI lint command clean.
