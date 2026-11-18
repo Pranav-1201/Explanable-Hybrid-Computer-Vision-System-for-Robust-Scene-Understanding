@@ -6,7 +6,14 @@ where things stood at the end of the last session, not what is true now.
 
 **Last updated:** 2026-11-18, session 62c83a86, Claude Sonnet 5.5 (`claude-sonnet-5-5`). See "Roadmap 2026-11, Phase 0" below; the older sections date from 2026-09-29.
 
-## Roadmap 2026-11, Phase 0 (in progress, uncommitted)
+## After the merge (2026-11-18, later session "EHCV 2")
+
+- PR #1 merged into `main`. Branch protection applied to `main`: required checks `lint-and-test` and `smoke`, no required reviews, admins not enforced.
+- Dependabot PRs #4 (certifi) and #3 (filelock) merged, CI green on both. Not re-run locally: `pytest` was not run this session.
+- Left open on purpose: #2 pillow 13.0.0 fails because the serve image's Python is older than 3.11 (pip: "Requires-Python >=3.11"); #7 python 3.10-slim to 3.15-slim is a large base-image jump; #5 torch 2.5.1 to 2.13.0 needs `evaluation/field_eval.py --check` before merging; #6 and #8 are GitHub Actions version bumps, untriaged.
+- Still open: `.env.example` is blocked by a permission deny rule; Phase F needs the Hugging Face account.
+
+## Roadmap 2026-11, Phase 0 (merged; PR #1)
 
 The plan is `Roadmap 2026-11\CV_DL_Elite_Roadmap_2026-11-15.docx` next to the field photos (kept outside the repo). Phase 0 rows:
 
