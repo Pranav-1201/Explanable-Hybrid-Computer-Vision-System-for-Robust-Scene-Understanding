@@ -1,5 +1,5 @@
 # bug: the Grad-CAM image was blocked by the CSP while the button said "shown"
-- Status: fixed locally, not yet in CI   - Opened: 2026-11-15 (audit X1, X2, X9)   - Model/session: Claude Sonnet 5.5 (`claude-sonnet-5-5`), session 62c83a86, 2026-11-18
+- Status: fixed, CI green on PR #1 (not merged)   - Opened: 2026-11-15 (audit X1, X2, X9)   - Model/session: Claude Sonnet 5.5 (`claude-sonnet-5-5`), session 62c83a86, 2026-11-18
 - Roadmap: Phase 0 rows CI1 and FE10 (`CV_DL_Elite_Roadmap_2026-11-15.docx`, kept outside the repo).
 
 ## Found / scoped
@@ -32,8 +32,10 @@ CSP in the test would have hidden this exact bug, so the test polls from Python 
 - Original `index.html`: **4 failed** (padding 0 px, hint text, naturalWidth 0, CSP violation) of 8 checks.
 - Fixed `index.html`: **0 failed**, 8 checks, `naturalWidth=224`.
 - `pytest tests/ -q`: 132 passed. `ruff check scripts/browser_test.py --select F,E9`: clean.
-- Not verified: the new CI step has not run on GitHub; the commit before the fix has not
-  been run in CI to show it red. Nothing has been committed or pushed.
+- CI, PR #1 (2026-11-18): `ci` success; `docker-smoke` success, 133 passed in the image and
+  the browser step printed 8 PASS, 0 failed (`naturalWidth=224`).
+- Not verified: the commit before the fix has not been run in CI to show it red; the red
+  run is local only.
 
 ## Left open
 The rest of Phase 0: BK2, DC3, CI3 (Dependabot, branch protection needs Pranav's GitHub admin).
