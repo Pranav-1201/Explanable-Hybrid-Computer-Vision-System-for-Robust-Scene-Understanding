@@ -107,3 +107,9 @@ Do not renumber; add the next `D<n>` at the bottom. Last used id: **D12**.
 - **Guard:** the test polls from Python because `wait_for_function` needs `eval`, which the CSP forbids; never run it with CSP bypassed, that would hide the bug it guards.
 - **Consequence:** CI now installs Chromium in the smoke job (slower run). Playwright is a dev dependency only, so CONSTRAINTS "ask first" on runtime dependencies is not triggered. The test runs against the real container with real weights.
 - **By:** Claude Sonnet 5.5 (`claude-sonnet-5-5`), session 62c83a86, 2026-11-18.
+
+### D14 - Python 3.10 to 3.12 for the image and CI
+- **Decision:** `Dockerfile` base `python:3.12-slim`; `ci.yml` and `docker-smoke.yml` use Python 3.12. Not 3.15, which Dependabot proposed (#7).
+- **Why:** Dependabot's pillow 13.0.0 (#2) failed the smoke build with "Requires-Python >=3.11"; the image ran 3.10. 3.12 is a stable release that torch 2.5.1 supports and pillow 13 accepts.
+- **Guard:** the local `venv` is still 3.10.11, so local pytest does not exercise 3.12; CI is the 3.12 evidence.
+- **By:** Claude Sonnet 5.5 (`claude-sonnet-5-5`), session bade2381, 2026-11-18.
