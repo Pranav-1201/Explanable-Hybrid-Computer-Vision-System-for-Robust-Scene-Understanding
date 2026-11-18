@@ -16,7 +16,7 @@ The plan is `Roadmap 2026-11\CV_DL_Elite_Roadmap_2026-11-15.docx` next to the fi
 | FE10 | Grad-CAM now shown via a blob URL (CSP unchanged), `main.wrap` padding, format hint names HEIC/AVIF |
 | BK2 | `/predict` returns a generic message plus `error_id` instead of exception text; test `test_predict_does_not_leak_exception_text` |
 | DC3 | `docs/API.md` updated (home_labels, /metrics, 429, env vars, removed `original_image`). `.env.example` was NOT written: a permission deny rule blocks that filename |
-| CI3 | Not started: Dependabot and branch protection change GitHub settings, need Pranav's go-ahead; require the browser step only after it has passed once in CI |
+| CI3 | Dependabot done 2026-11-18 with Pranav's approval: alerts and security updates enabled (API: alerts 204, `dependabot_security_updates` enabled) and `.github/dependabot.yml` added (pip, actions, docker, weekly). **Branch protection not applied**: Pranav chose to wait until PR #1 is merged; then require `ci` and `docker-smoke` |
 
 Evidence this session: `pytest tests/ -q` 133 passed (132 before, plus the BK2 test); ruff clean on the files touched. Decision D13, trace `docs/traces/2026-11-18-gradcam-csp-browser-test.md`. Committed on branch `phase-0/browser-test-and-fixes` and pushed; PR #1 open against `main`, not merged.
 Watch for: the test has never been run in CI on the commit before the fix (red run seen only locally); `tests/` still has no X2/X9 test outside the browser script.

@@ -1,0 +1,22 @@
+# Roadmap CI3. Security alerts and security-update PRs are switched on in the
+# repository settings; this file adds weekly version-update PRs, kept few so
+# they stay reviewable. Every pin in requirements*.txt is deliberate (torch is
+# a +cpu build from the PyTorch index, see docs/DECISIONS.md D2), so treat a
+# Dependabot PR as a prompt to review, never as something to merge unread.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+  - package-ecosystem: docker
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 2
