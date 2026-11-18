@@ -106,7 +106,9 @@
   .btn-link:hover { border-color: var(--accent); color: var(--accent); }
 
   /* ── Dropzone (the signature: drawing-sheet grid) ───────── */
-  main { padding: 40px 0 80px; }
+  /* `main` carries class .wrap, whose `padding: 0 24px` outranked a bare
+     `main` rule and zeroed the vertical padding (audit X2); match its specificity. */
+  main.wrap { padding: 40px 24px 80px; }
   .dropzone {
     border: 1.5px dashed var(--hairline); border-radius: 14px;
     background:
@@ -322,7 +324,7 @@
     <section id="empty">
       <div class="dropzone" id="dropzone" role="button" tabindex="0" aria-label="Add property photos">
         <div class="dz-title">Drop property photos here</div>
-        <div class="dz-sub">JPEG, PNG or WEBP · up to 50 at once</div>
+        <div class="dz-sub">JPEG, PNG, WebP, HEIC, AVIF or BMP · up to 50 at once</div>
         <span class="dz-pick">Choose files</span>
         <button type="button" class="dz-folder" id="folder-pick">or choose a folder</button>
         <div class="dz-note">Nothing is stored — images are tagged in memory and discarded.</div>
@@ -762,6 +764,7 @@
     detail.showModal();
   }
 
+  let camUrl = null;  // object URL of the Grad-CAM image currently shown
   function explain(fileIdx, btn) {
     btn.disabled = true; btn.textContent = "Computing…";
     const form = new FormData();
@@ -771,7 +774,15 @@
       .then(r => r.json())
       .then(res => {
         if (res.gradcam) {
-          $("cam-img").src = "data:image/png;base64," + res.gradcam;
+          // The CSP allows img-src 'self' blob: only (CONSTRAINTS rule 12), so a
+          // data: URL is blocked silently (audit X1). Decode to a blob instead
+          // and release the previous one so repeated Explain clicks do not leak.
+          const bin = atob(res.gradcam);
+          const bytes = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+          if (camUrl) URL.revokeObjectURL(camUrl);
+          camUrl = URL.createObjectURL(new Blob([bytes], { type: "image/png" }));
+          $("cam-img").src = camUrl;
           $("cam-wrap").classList.remove("hidden");
           btn.textContent = "Grad-CAM shown";
         } else {

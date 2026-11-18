@@ -100,3 +100,10 @@ Do not renumber; add the next `D<n>` at the bottom. Last used id: **D12**.
 - **B9 async job API - not built.** The frontend already sends chunks of 8 and paints incremental progress (F1); a job queue adds state without a measured need. P2 in the roadmap.
 - **M4 (listing-photo fine-tune), M7 (stronger backbone), M8 (CLIP zero-shot):** need data or models this repo does not have; D10 shows retraining a head on the current backbone does not move the errors that matter. M6 (conformal review guarantees) is unscoped.
 - **By:** Claude Sonnet 5.5 (`claude-sonnet-5-5`), session 59024edd, 2026-09-29.
+
+### D13 - Browser test with dev-only Playwright; Grad-CAM shown through a blob (roadmap CI1, FE10)
+- **Decision:** add `scripts/browser_test.py` (Python Playwright, pinned in `requirements-browser.txt`, used only by a new step in `docker-smoke.yml`; not in the serve image or `requirements-test.txt`). Keep the CSP as it is and make the page decode the Grad-CAM base64 into a `Blob` URL instead of allowing `data:` images.
+- **Why:** audit X1: the CSP blocked the Grad-CAM `data:` image while the button read "Grad-CAM shown"; no test opened a browser. Measured locally: original page 4 of 8 checks failed (including `naturalWidth` 0), fixed page 0 failed (`naturalWidth` 224).
+- **Guard:** the test polls from Python because `wait_for_function` needs `eval`, which the CSP forbids; never run it with CSP bypassed, that would hide the bug it guards.
+- **Consequence:** CI now installs Chromium in the smoke job (slower run). Playwright is a dev dependency only, so CONSTRAINTS "ask first" on runtime dependencies is not triggered. The test runs against the real container with real weights.
+- **By:** Claude Sonnet 5.5 (`claude-sonnet-5-5`), session 62c83a86, 2026-11-18.

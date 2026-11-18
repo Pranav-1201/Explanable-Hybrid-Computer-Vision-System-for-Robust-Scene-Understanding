@@ -1,0 +1,9 @@
+# Browser-test tooling (scripts/browser_test.py). Dev and CI only: not in the
+# serve image and not in requirements-test.txt. Install the browser itself with
+#   playwright install --with-deps chromium
+# Pins: playwright and greenlet are what pip resolved in the project venv on
+# 2026-11-18 (greenlet is Playwright's only non-stdlib dependency); pillow
+# matches requirements-serve.txt and draws the test photos.
+playwright==1.65.2
+greenlet==3.5.6
+pillow==12.1.0
