@@ -36,6 +36,21 @@ jobs:
       - name: Smoke test against the running container
         run: docker run --rm --network host cvdl-test python scripts/smoke_test.py --base http://127.0.0.1:7860 --health-timeout 600
 
+      # Roadmap CI1: the API smoke test cannot see what the browser blocks (audit
+      # X1, a CSP-blocked Grad-CAM image). Drive the real page against the same
+      # running container.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install browser-test tooling
+        run: |
+          pip install -r requirements-browser.txt
+          playwright install --with-deps chromium
+
+      - name: Browser test against the running container
+        run: python scripts/browser_test.py --base http://127.0.0.1:7860 --timeout 120
+
       - name: Container logs
         if: always()
         run: docker logs cvdl || true
