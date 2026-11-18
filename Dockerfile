@@ -1,7 +1,7 @@
 # CPU serving image for the interior tagger.
 #   docker build -t cvdl .                 # serve target (default)
 #   docker build --target test -t cvdl-test .
-FROM python:3.10-slim AS base
+FROM python:3.15-slim AS base
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
